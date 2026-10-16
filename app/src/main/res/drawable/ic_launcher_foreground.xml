@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A cardboard box seen at an angle, in the 108dp adaptive icon safe zone -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- left face -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,52 L32,41 L32,66 L54,77 Z" />
+    <!-- right face -->
+    <path android:fillColor="#FFF8E3C2" android:pathData="M54,52 L76,41 L76,66 L54,77 Z" />
+    <!-- top -->
+    <path android:fillColor="#FFFFF6E8" android:pathData="M32,41 L54,30 L76,41 L54,52 Z" />
+    <!-- tape -->
+    <path android:fillColor="#FF7A4A12" android:pathData="M42,36 L64,47 L64,53 L60,51 L60,47.5 L38,38 Z" />
+    <!-- edges -->
+    <path android:strokeColor="#FF7A4A12" android:strokeWidth="2" android:strokeLineJoin="round"
+        android:pathData="M54,52 L32,41 L54,30 L76,41 Z M32,41 L32,66 L54,77 L76,66 L76,41 M54,52 L54,77" />
+</vector>
