@@ -25,7 +25,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +76,7 @@ fun DetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = shipmentsTopBarColors(),
                 title = { Text(p.title, maxLines = 1) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back") } },
                 actions = {
@@ -126,7 +126,8 @@ fun DetailScreen(
             }
             if (stops.isNotEmpty()) item {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).height(200.dp)
-                    .clip(RoundedCornerShape(16.dp))) {
+                    .then(if (LocalModern.current) Modifier.neuRaised(modernPalette, 20.dp) else Modifier)
+                    .clip(RoundedCornerShape(if (LocalModern.current) 20.dp else 16.dp))) {
                     RouteMap(stops, p.status.color, interactive = false, modifier = Modifier.fillMaxSize(), onTap = onMap)
                     MapAttribution(Modifier.align(Alignment.BottomEnd))
                 }
@@ -209,7 +210,7 @@ private fun EventRow(e: TrackEvent, isLatest: Boolean, color: androidx.compose.u
 fun MapAttribution(modifier: Modifier = Modifier) {
     Surface(modifier.padding(4.dp), shape = RoundedCornerShape(4.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)) {
-        Text("© OpenStreetMap contributors", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
+        Text("© OpenFreeMap © OpenStreetMap", fontSize = 9.sp, modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp))
     }
 }
 
@@ -223,6 +224,5 @@ fun MapScreen(p: Parcel, onBack: () -> Unit) {
         FilledIconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(12.dp)) {
             Icon(Icons.Filled.ArrowBack, "Back")
         }
-        MapAttribution(Modifier.align(Alignment.BottomEnd).padding(bottom = 24.dp))
     }
 }

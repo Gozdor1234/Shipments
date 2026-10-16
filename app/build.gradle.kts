@@ -77,6 +77,6 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.1.0")
     implementation("androidx.glance:glance-material3:1.1.0")
 
-    // Route map (OpenStreetMap tiles, no API key needed)
-    implementation("org.osmdroid:osmdroid-android:6.1.20")
+    // Route map: MapLibre GL JS (bundled in assets) in a WebView, served via WebViewAssetLoader
+    implementation("androidx.webkit:webkit:1.11.0")
 }

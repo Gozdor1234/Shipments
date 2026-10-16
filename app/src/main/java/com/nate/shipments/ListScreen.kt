@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -55,6 +54,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -96,6 +97,7 @@ fun ListScreen(
         modifier = Modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
             LargeTopAppBar(
+                colors = shipmentsLargeTopBarColors(),
                 title = { Text("Shipments") },
                 actions = { IconButton(onClick = onSettings) { Icon(Icons.Filled.Settings, "Settings") } },
                 scrollBehavior = scroll,
@@ -175,7 +177,12 @@ private fun ParcelRow(p: Parcel, actions: Actions, onOpen: (Parcel) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
-    Box {
+    val modern = LocalModern.current
+    Box(
+        if (modern) Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+            .neuRaised(modernPalette, 20.dp).clip(RoundedCornerShape(20.dp))
+        else Modifier
+    ) {
         Row(
             Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(p) }, onLongClick = { menu = true })
                 .padding(horizontal = 16.dp, vertical = 12.dp),

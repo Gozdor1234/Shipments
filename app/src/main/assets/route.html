@@ -1,0 +1,114 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<link rel="stylesheet" href="maplibre-gl.css">
+<style>
+  html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+  .maplibregl-ctrl-attrib { font-size: 10px; }
+  .msg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+         font: 14px sans-serif; text-align: center; padding: 24px; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="msg" id="msg"></div>
+<script src="maplibre-gl.js"></script>
+<script>
+  // The app calls init(theme) once, then setStops(list) whenever the scans change.
+  // theme: { interactive, bg, land, water, road, major, building, boundary, label, accent, past }
+  var map = null, ready = false, pending = null, T = null;
+
+  function init(theme) {
+    T = theme;
+    document.body.style.background = T.bg;
+    document.getElementById('msg').style.color = T.label;
+    try {
+      map = new maplibregl.Map({
+        container: 'map',
+        // Positron is OpenFreeMap's simplest vector style; every color is then repainted to match the app.
+        style: 'https://tiles.openfreemap.org/styles/positron',
+        center: [-96, 39], zoom: 3, maxZoom: 15,
+        interactive: !!T.interactive,
+        dragRotate: false, pitchWithRotate: false, fadeDuration: 0,
+        attributionControl: T.interactive ? { compact: true } : false
+      });
+    } catch (e) { showMsg('This phone could not start the map (' + e.message + ').'); return; }
+    if (T.interactive) map.touchZoomRotate.disableRotation();
+    map.on('load', function () {
+      ready = true;
+      repaint();
+      addRouteLayers();
+      if (pending) { var p = pending; pending = null; setStops(p); }
+    });
+    window.addEventListener('resize', function () { map.resize(); });
+    setTimeout(function () { if (!ready) showMsg("Couldn't load the map. Check your connection."); }, 15000);
+  }
+
+  function showMsg(t) { var m = document.getElementById('msg'); m.textContent = t; m.style.display = 'flex'; }
+
+  function set(id, prop, val) { try { map.setPaintProperty(id, prop, val); } catch (e) { /* layer lacks it */ } }
+
+  // Repaint the base map in the app's theme colors so it sits naturally in light, dark, AMOLED or custom themes.
+  function repaint() {
+    (map.getStyle().layers || []).forEach(function (l) {
+      var id = l.id;
+      if (l.type === 'background') set(id, 'background-color', T.bg);
+      else if (l.type === 'fill') {
+        if (/water/.test(id)) set(id, 'fill-color', T.water);
+        else if (/building/.test(id)) set(id, 'fill-color', T.building);
+        else { set(id, 'fill-color', T.land); set(id, 'fill-outline-color', T.land); }
+      } else if (l.type === 'line') {
+        if (/water|river|stream|canal/.test(id)) set(id, 'line-color', T.water);
+        else if (/boundary|admin/.test(id)) set(id, 'line-color', T.boundary);
+        else if (/casing/.test(id)) set(id, 'line-color', T.bg);
+        else if (/motorway|trunk|major|primary/.test(id)) set(id, 'line-color', T.major);
+        else set(id, 'line-color', T.road);
+      } else if (l.type === 'symbol') {
+        set(id, 'text-color', T.label);
+        set(id, 'text-halo-color', T.bg);
+        set(id, 'icon-opacity', 0.6);
+      }
+    });
+  }
+
+  function addRouteLayers() {
+    map.addSource('route', { type: 'geojson', data: empty() });
+    map.addSource('stops', { type: 'geojson', data: empty() });
+    map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': T.bg, 'line-width': 8 } });
+    map.addLayer({ id: 'route-line', type: 'line', source: 'route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': T.accent, 'line-width': 4, 'line-opacity': 0.9 } });
+    map.addLayer({ id: 'stop-past', type: 'circle', source: 'stops', filter: ['!=', ['get', 'latest'], true],
+      paint: { 'circle-radius': 5, 'circle-color': T.past, 'circle-stroke-color': T.bg, 'circle-stroke-width': 2 } });
+    map.addLayer({ id: 'stop-halo', type: 'circle', source: 'stops', filter: ['==', ['get', 'latest'], true],
+      paint: { 'circle-radius': 18, 'circle-color': T.accent, 'circle-opacity': 0.22 } });
+    map.addLayer({ id: 'stop-now', type: 'circle', source: 'stops', filter: ['==', ['get', 'latest'], true],
+      paint: { 'circle-radius': 8, 'circle-color': T.accent, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
+  }
+
+  function empty() { return { type: 'FeatureCollection', features: [] }; }
+
+  // stops: [{ lat, lon }] oldest first; the last one is where the package is now.
+  function setStops(stops) {
+    if (!ready) { pending = stops; return; }
+    var coords = stops.map(function (s) { return [s.lon, s.lat]; });
+    map.getSource('route').setData(coords.length > 1
+      ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } : empty());
+    map.getSource('stops').setData({ type: 'FeatureCollection', features: coords.map(function (c, i) {
+      return { type: 'Feature', properties: { latest: i === coords.length - 1 }, geometry: { type: 'Point', coordinates: c } };
+    }) });
+    if (coords.length === 1) {
+      map.jumpTo({ center: coords[0], zoom: 10 });
+    } else if (coords.length > 1) {
+      var b = new maplibregl.LngLatBounds(coords[0], coords[0]);
+      coords.forEach(function (c) { b.extend(c); });
+      map.fitBounds(b, { padding: T.interactive ? 72 : 40, maxZoom: 11, duration: 0 });
+    }
+  }
+</script>
+</body>
+</html>

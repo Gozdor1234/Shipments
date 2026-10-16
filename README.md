@@ -7,10 +7,11 @@ A package tracker for Android in the spirit of Parcel and Deliveries on iOS. A f
 - Add a package by tracking number (paste, type, or share text into the app from any email or message)
 - Carrier detected automatically (USPS, UPS, FedEx, DHL and more), or set it yourself
 - Status timeline grouped by day, with progress bar and estimated delivery
-- Route map of scan locations (OpenStreetMap, no Google account needed)
+- Route map of scan locations, drawn as a crisp vector map that follows your theme (OpenFreeMap, no Google account needed)
 - Background refresh with notifications when a status or location changes
 - Home screen widget listing packages on the way
 - Archive, rename, delete, open on carrier website
+- Appearance settings: System, Light, Dark or AMOLED theme, Match phone colors, Modern glass style, and custom colors for each part of the app
 
 ## Setup
 

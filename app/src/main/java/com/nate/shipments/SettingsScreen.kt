@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,6 +35,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.key
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -55,10 +59,34 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
     var quotaText by remember { mutableStateOf<String?>(null) }
     var interval by remember { mutableStateOf(Settings.interval(ctx)) }
     var notify by remember { mutableStateOf(Settings.notify(ctx)) }
+    val look = Appearance.get(ctx)
+    var editing by remember { mutableStateOf<ColorSlot?>(null) }
+
+    // What each area looks like right now (theme color, or the custom one), for swatches and checks.
+    val cs = MaterialTheme.colorScheme
+    val barColor = LocalExtraColors.current.bar ?: cs.surface
+    val shown: Map<ColorSlot, Color> = mapOf(
+        ColorSlot.Background to cs.background,
+        ColorSlot.Cards to cs.surfaceContainerHighest,
+        ColorSlot.Accent to cs.primary,
+        ColorSlot.Text to cs.onSurface,
+        ColorSlot.SubText to cs.onSurfaceVariant,
+        ColorSlot.Lines to cs.outlineVariant,
+        ColorSlot.Bars to barColor,
+    )
+    val issues = if (!look.customColorsOn) emptyList() else ContrastCheck.issues(
+        listOf(
+            Triple("Main text on Background", cs.onSurface.toArgb() to cs.background.toArgb(), 4.5),
+            Triple("Main text on Cards", cs.onSurface.toArgb() to cs.surfaceContainerHighest.toArgb(), 4.5),
+            Triple("Secondary text on Background", cs.onSurfaceVariant.toArgb() to cs.background.toArgb(), 3.0),
+            Triple("Accent on Background", cs.primary.toArgb() to cs.background.toArgb(), 3.0),
+        ),
+    )
 
     Scaffold(
         topBar = {
             TopAppBar(
+                colors = shipmentsTopBarColors(),
                 title = { Text("Settings") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back") } },
             )
@@ -142,11 +170,100 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             }
 
             HorizontalDivider()
-            Spacer(Modifier.height(4.dp))
+            Text("Appearance", style = MaterialTheme.typography.titleMedium)
+            SwitchRow("Modern style (glass panels, soft shadows)", look.modernStyle) { look.updateModernStyle(it) }
+            Hint("Off keeps the standard look. Works with every theme below. The home screen widget always uses the standard look.")
+            SwitchRow("Match my phone's colors", look.matchPhoneColors && supportsPhoneColors, enabled = supportsPhoneColors) {
+                look.updateMatchPhoneColors(it)
+            }
+            Hint(
+                if (supportsPhoneColors) "Uses the color palette from your phone's wallpaper and style settings. Turn off for the app's own colors."
+                else "Matching phone colors needs Android 12 or newer.",
+            )
+            Text("Theme", style = MaterialTheme.typography.bodyLarge)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                listOf("system" to "System", "light" to "Light", "dark" to "Dark", "amoled" to "AMOLED").forEach { (k, label) ->
+                    FilterChip(selected = look.themeMode == k, onClick = { look.updateThemeMode(k) }, label = { Text(label) })
+                }
+            }
+            Hint("System follows your phone's light/dark setting. AMOLED is dark mode with pure black backgrounds.")
+
+            HorizontalDivider()
+            Text("Custom colors", style = MaterialTheme.typography.titleMedium)
+            SwitchRow("Use custom colors", look.customColorsOn) { look.updateCustomColorsOn(it) }
+            Hint(
+                "Pick your own color for each part of the app. Custom colors sit on top of the theme above; " +
+                    "anything left on Default keeps the theme's color. Turning this off keeps your picks for later. " +
+                    "Package status colors (blue in transit, green delivered, and so on) stay the same so they keep their meaning.",
+            )
+            if (look.customColorsOn) {
+                ColorSlot.entries.forEach { slot ->
+                    ColorSlotRow(slot, shown[slot] ?: Color.Gray, isCustom = slot in look.customColors) { editing = slot }
+                }
+                if (issues.isNotEmpty()) {
+                    Column {
+                        Text("Hard to read", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.error)
+                        issues.forEach { i ->
+                            Text(
+                                "${i.message}: contrast ${"%.1f".format(i.ratio)}:1 (aim for at least 4.5:1 for text)",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                }
+                if (look.customColors.isNotEmpty()) {
+                    TextButton(onClick = { look.resetCustomColors() }) { Text("Reset all colors to default") }
+                }
+            }
+
+            HorizontalDivider()
+            Text("About", style = MaterialTheme.typography.titleMedium)
+            Hint(
+                "Tracking data comes from Trace (traceapi.dev). Maps use OpenFreeMap with data from " +
+                    "OpenStreetMap contributors. Personal use only.",
+            )
+            Text("About the developer", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Shipments by ChickenMyBobbers. Tracking data from Trace (traceapi.dev). Maps © OpenStreetMap contributors.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "Shipments is a one-person project by ChickenMyBobbers. It started as a late-night attempt to get " +
+                    "Parcel and Deliveries on Android and turned into a package tracker with the good parts of both, " +
+                    "minus the ads, bulk, and nonsense. I hope you enjoy!",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    editing?.let { slot ->
+        // key(): a fresh picker (and fresh starting color) for each area.
+        key(slot) {
+            ColorPickerDialog(
+                title = slot.label,
+                initial = (shown[slot] ?: Color.Gray).toArgb(),
+                isCustom = slot in look.customColors,
+                onApply = { look.updateCustomColor(slot, it); editing = null },
+                onReset = { look.updateCustomColor(slot, null); editing = null },
+                onDismiss = { editing = null },
             )
         }
+    }
+}
+
+@Composable
+private fun Hint(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+private fun SwitchRow(text: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge,
+            color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
     }
 }
