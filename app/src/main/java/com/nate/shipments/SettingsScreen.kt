@@ -59,6 +59,9 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
     var quotaText by remember { mutableStateOf<String?>(null) }
     var interval by remember { mutableStateOf(Settings.interval(ctx)) }
     var notify by remember { mutableStateOf(Settings.notify(ctx)) }
+    var homeText by remember { mutableStateOf(Settings.homeAddress(ctx)) }
+    var homeStatus by remember { mutableStateOf<String?>(null) }
+    var homeBusy by remember { mutableStateOf(false) }
     val look = Appearance.get(ctx)
     var editing by remember { mutableStateOf<ColorSlot?>(null) }
 
@@ -158,6 +161,34 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
                     "Your Trace dashboard has the exact count.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            HorizontalDivider()
+            Text("Delivery address", style = MaterialTheme.typography.titleMedium)
+            Hint(
+                "Tracking data doesn't include where a package is headed, so route maps draw the dotted " +
+                    "\"still to go\" line to this address. A city and state or a ZIP code is enough. Stored only on this phone.",
+            )
+            OutlinedTextField(
+                value = homeText, onValueChange = { homeText = it }, singleLine = true,
+                label = { Text("Address, city, or ZIP") }, modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(enabled = !homeBusy, onClick = {
+                    homeBusy = true
+                    scope.launch {
+                        val t = homeText.trim()
+                        val point = if (t.isEmpty()) null else Geo.place(ctx.applicationContext, t)
+                        Settings.setHome(ctx, t, point)
+                        homeStatus = when {
+                            t.isEmpty() -> "Cleared. Maps won't show a line to go."
+                            point == null -> "Couldn't find that place on the map. Try a city and state or a ZIP."
+                            else -> "Saved."
+                        }
+                        homeBusy = false
+                    }
+                }) { Text(if (homeBusy) "Finding..." else "Save address") }
+                homeStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
 
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {

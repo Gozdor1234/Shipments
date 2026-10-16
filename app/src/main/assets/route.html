@@ -78,6 +78,14 @@
     map.addSource('pkgs', { type: 'geojson', data: empty() });
     map.addSource('route', { type: 'geojson', data: empty() });
     map.addSource('stops', { type: 'geojson', data: empty() });
+    map.addSource('ahead', { type: 'geojson', data: empty() });
+    map.addSource('dest', { type: 'geojson', data: empty() });
+    // Still to go: a dotted curve from where the package is now to the delivery address.
+    map.addLayer({ id: 'ahead-line', type: 'line', source: 'ahead',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': T.accent, 'line-width': 3.5, 'line-opacity': 0.75, 'line-dasharray': [0.1, 2.2] } });
+    map.addLayer({ id: 'dest-ring', type: 'circle', source: 'dest',
+      paint: { 'circle-radius': 7, 'circle-color': T.bg, 'circle-stroke-color': T.accent, 'circle-stroke-width': 3 } });
     map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
       paint: { 'line-color': T.bg, 'line-width': 8 } });
@@ -132,12 +140,40 @@
 
   function empty() { return { type: 'FeatureCollection', features: [] }; }
 
+  // A gentle arc from a to b ([lon, lat]): a quadratic curve whose midpoint is pushed sideways
+  // by a fraction of the leg's length. Always bends the same way so a route reads as one path.
+  function arc(a, b, bend) {
+    var dx = b[0] - a[0], dy = b[1] - a[1];
+    var len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 1e-6) return [a, b];
+    var cx = (a[0] + b[0]) / 2 - dy * bend, cy = (a[1] + b[1]) / 2 + dx * bend;
+    var pts = [], n = 40;
+    for (var i = 0; i <= n; i++) {
+      var t = i / n, u = 1 - t;
+      pts.push([u * u * a[0] + 2 * u * t * cx + t * t * b[0], u * u * a[1] + 2 * u * t * cy + t * t * b[1]]);
+    }
+    return pts;
+  }
+
+  function line(c) { return { type: 'Feature', geometry: { type: 'LineString', coordinates: c } }; }
+
   // stops: [{ lat, lon }] oldest first; the last one is where the package is now.
-  function setStops(stops) {
-    if (!ready) { pending = function () { setStops(stops); }; return; }
+  // dest: { lat, lon } delivery address, or null when there's nothing left to go.
+  function setStops(stops, dest) {
+    if (!ready) { pending = function () { setStops(stops, dest); }; return; }
     var coords = stops.map(function (s) { return [s.lon, s.lat]; });
-    map.getSource('route').setData(coords.length > 1
-      ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } : empty());
+    var path = [];
+    for (var i = 1; i < coords.length; i++) {
+      var leg = arc(coords[i - 1], coords[i], 0.18);
+      path = path.concat(i === 1 ? leg : leg.slice(1));
+    }
+    map.getSource('route').setData(path.length > 1 ? line(path) : empty());
+    var d = dest ? [dest.lon, dest.lat] : null;
+    var last = coords[coords.length - 1];
+    var toGo = d && last && (Math.abs(d[0] - last[0]) + Math.abs(d[1] - last[1]) > 0.01);
+    map.getSource('ahead').setData(toGo ? line(arc(last, d, 0.18)) : empty());
+    map.getSource('dest').setData(toGo ? { type: 'Feature', geometry: { type: 'Point', coordinates: d } } : empty());
+    if (toGo) coords = coords.concat([d]);
     map.getSource('stops').setData({ type: 'FeatureCollection', features: coords.map(function (c, i) {
       return { type: 'Feature', properties: { latest: i === coords.length - 1 }, geometry: { type: 'Point', coordinates: c } };
     }) });

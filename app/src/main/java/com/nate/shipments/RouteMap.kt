@@ -60,6 +60,10 @@ object Geo {
         }
     }
 
+    /** Geocode a typed address (e.g. the delivery address in Settings). Null if it can't be found. */
+    suspend fun place(ctx: Context, query: String): Pair<Double, Double>? =
+        withContext(Dispatchers.IO) { query.trim().takeIf { it.isNotEmpty() }?.let { lookup(ctx, it) } }
+
     /** Oldest-first stops, merging consecutive scans at the same place. */
     suspend fun stops(ctx: Context, events: List<TrackEvent>): List<MapStop> = withContext(Dispatchers.IO) {
         val out = mutableListOf<MapStop>()
@@ -112,12 +116,13 @@ private fun themeJson(interactive: Boolean, accent: Color): String {
  * so it doesn't fight the screen's scrolling.
  */
 @Composable
-fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
+fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean, destination: Pair<Double, Double>?,
              modifier: Modifier = Modifier, onTap: () -> Unit = {}) {
     val data = JSONArray().apply {
         stops.forEach { put(JSONObject().put("lat", it.lat).put("lon", it.lon)) }
     }.toString()
-    MapWebView(themeJson(interactive, color), "setStops($data)", interactive, modifier, onTap) {}
+    val dest = destination?.let { JSONObject().put("lat", it.first).put("lon", it.second).toString() } ?: "null"
+    MapWebView(themeJson(interactive, color), "setStops($data, $dest)", interactive, modifier, onTap) {}
 }
 
 /**

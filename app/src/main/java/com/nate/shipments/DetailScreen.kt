@@ -128,7 +128,8 @@ fun DetailScreen(
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).height(200.dp)
                     .then(if (LocalModern.current) Modifier.neuRaised(modernPalette, 20.dp) else Modifier)
                     .clip(RoundedCornerShape(if (LocalModern.current) 20.dp else 16.dp))) {
-                    RouteMap(stops, p.status.color, interactive = false, modifier = Modifier.fillMaxSize(), onTap = onMap)
+                    RouteMap(stops, p.status.color, interactive = false, destination = destinationFor(ctx, p),
+                        modifier = Modifier.fillMaxSize(), onTap = onMap)
                     MapAttribution(Modifier.align(Alignment.BottomEnd))
                 }
             }
@@ -220,7 +221,8 @@ fun MapScreen(p: Parcel, onBack: () -> Unit) {
     var stops by remember { mutableStateOf<List<MapStop>>(emptyList()) }
     LaunchedEffect(p.events) { stops = Geo.stops(ctx.applicationContext, p.events) }
     Box(Modifier.fillMaxSize()) {
-        RouteMap(stops, p.status.color, interactive = true, modifier = Modifier.fillMaxSize())
+        RouteMap(stops, p.status.color, interactive = true, destination = destinationFor(ctx, p),
+            modifier = Modifier.fillMaxSize())
         FilledIconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(12.dp)) {
             Icon(Icons.Filled.ArrowBack, "Back")
         }
@@ -241,3 +243,7 @@ fun OverviewScreen(active: List<Parcel>, onBack: () -> Unit, onOpen: (String) ->
         }
     }
 }
+
+/** Where the dotted line points: the delivery address, unless the package is already there or waiting at a pickup point. */
+private fun destinationFor(ctx: android.content.Context, p: Parcel): Pair<Double, Double>? =
+    if (p.status == Status.DELIVERED || p.status == Status.AVAILABLE_FOR_PICKUP) null else Settings.home(ctx)

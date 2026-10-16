@@ -78,6 +78,20 @@ object Settings {
     }
     private fun month() = java.time.YearMonth.now().toString()
 
+    /** Delivery address and its map point, for the dotted "still to go" line on route maps. */
+    fun homeAddress(ctx: Context): String = prefs(ctx).getString("homeAddress", "") ?: ""
+    fun home(ctx: Context): Pair<Double, Double>? {
+        val p = prefs(ctx)
+        if (!p.contains("homeLat")) return null
+        return p.getFloat("homeLat", 0f).toDouble() to p.getFloat("homeLon", 0f).toDouble()
+    }
+    fun setHome(ctx: Context, address: String, point: Pair<Double, Double>?) {
+        val e = prefs(ctx).edit().putString("homeAddress", address.trim())
+        if (point == null) e.remove("homeLat").remove("homeLon")
+        else e.putFloat("homeLat", point.first.toFloat()).putFloat("homeLon", point.second.toFloat())
+        e.apply()
+    }
+
     fun notify(ctx: Context): Boolean = prefs(ctx).getBoolean("notify", true)
     fun setNotify(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("notify", v).apply()
 
