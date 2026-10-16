@@ -95,8 +95,8 @@ fun DetailScreen(
                             ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
                                 .putExtra(Intent.EXTRA_TEXT, p.number), null))
                         })
-                        DropdownMenuItem(text = { Text(if (p.archived) "Unarchive" else "Archive") },
-                            onClick = { menu = false; actions.edit(p.id) { it.copy(archived = !it.archived) } })
+                        DropdownMenuItem(text = { Text(if (p.archived) "Move back to home" else "Archive") },
+                            onClick = { menu = false; actions.setArchived(p, !p.archived) })
                         DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; deleting = true })
                     }
                 },
@@ -221,6 +221,21 @@ fun MapScreen(p: Parcel, onBack: () -> Unit) {
     LaunchedEffect(p.events) { stops = Geo.stops(ctx.applicationContext, p.events) }
     Box(Modifier.fillMaxSize()) {
         RouteMap(stops, p.status.color, interactive = true, modifier = Modifier.fillMaxSize())
+        FilledIconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(12.dp)) {
+            Icon(Icons.Filled.ArrowBack, "Back")
+        }
+    }
+}
+
+/** Full-screen map of every package on the way; tap a dot to open that package. */
+@Composable
+fun OverviewScreen(active: List<Parcel>, onBack: () -> Unit, onOpen: (String) -> Unit) {
+    val ctx = LocalContext.current
+    var pins by remember { mutableStateOf<List<MapPin>>(emptyList()) }
+    val pinKey = active.map { it.id to it.latest?.key }
+    LaunchedEffect(pinKey) { pins = Geo.pins(ctx.applicationContext, active) }
+    Box(Modifier.fillMaxSize()) {
+        OverviewMap(pins, interactive = true, modifier = Modifier.fillMaxSize(), onOpen = onOpen)
         FilledIconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(12.dp)) {
             Icon(Icons.Filled.ArrowBack, "Back")
         }

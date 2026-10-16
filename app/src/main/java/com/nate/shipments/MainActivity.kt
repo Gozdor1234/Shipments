@@ -10,7 +10,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -68,8 +70,17 @@ class Actions(
     private val ctx: android.content.Context,
     private val scope: CoroutineScope,
     private val toast: (String) -> Unit,
+    private val undoable: (String, () -> Unit) -> Unit,
     private val setRefreshing: (Boolean) -> Unit,
 ) {
+    /** Archive or restore, with an Undo on the snackbar. Sets (never toggles), so repeats are harmless. */
+    fun setArchived(p: Parcel, archived: Boolean) {
+        edit(p.id) { it.copy(archived = archived) }
+        undoable(if (archived) "Archived ${p.title}" else "Moved ${p.title} back to home") {
+            edit(p.id) { it.copy(archived = !archived) }
+        }
+    }
+
     fun refresh(onlyIds: Set<String>? = null, quiet: Boolean = false, minAgeMs: Long = 0) {
         scope.launch {
             setRefreshing(true)
@@ -121,10 +132,20 @@ fun App(openId: String?, onOpened: () -> Unit, sharedText: String?, onSharedHand
     val parcels by Store.parcels.collectAsStateWithLifecycle()
     var refreshing by remember { mutableStateOf(false) }
     val actions = remember {
-        Actions(ctx.applicationContext, scope, { msg -> scope.launch { snackbar.showSnackbar(msg) } }) { refreshing = it }
+        Actions(
+            ctx.applicationContext, scope,
+            toast = { msg -> scope.launch { snackbar.showSnackbar(msg) } },
+            undoable = { msg, undo ->
+                scope.launch {
+                    snackbar.currentSnackbarData?.dismiss()
+                    val r = snackbar.showSnackbar(msg, actionLabel = "Undo", duration = SnackbarDuration.Short)
+                    if (r == SnackbarResult.ActionPerformed) undo()
+                }
+            },
+        ) { refreshing = it }
     }
 
-    // Simple back stack, saved across rotation: "list", "detail:<id>", "map:<id>", "settings".
+    // Simple back stack, saved across rotation: "list", "detail:<id>", "map:<id>", "overview", "archive", "settings".
     var stackText by rememberSaveable { mutableStateOf("list") }
     val stack = stackText.split('|')
     val top = stack.last()
@@ -169,6 +190,12 @@ fun App(openId: String?, onOpened: () -> Unit, sharedText: String?, onSharedHand
             if (p == null) LaunchedEffect(top) { pop() }
             else DetailScreen(p, actions, refreshing, onBack = ::pop, onMap = { push("map:${p.id}") }, snackHost = snackHost)
         }
+        top == "overview" -> {
+            val active = parcels.filter { !it.archived && it.status != Status.DELIVERED }
+            OverviewScreen(active, onBack = ::pop, onOpen = { id -> push("detail:$id") })
+        }
+        top == "archive" -> ArchiveScreen(parcels, actions, onOpen = { push("detail:${it.id}") }, onBack = ::pop,
+            snackHost = snackHost)
         top.startsWith("map:") -> {
             val p = parcels.firstOrNull { it.id == top.removePrefix("map:") }
             if (p == null) LaunchedEffect(top) { pop() } else MapScreen(p, onBack = ::pop)
@@ -182,6 +209,8 @@ fun App(openId: String?, onOpened: () -> Unit, sharedText: String?, onSharedHand
             onPrefillUsed = { addPrefill = null },
             onOpen = { push("detail:${it.id}") },
             onSettings = { push("settings") },
+            onOverview = { push("overview") },
+            onArchive = { push("archive") },
             snackHost = snackHost,
         )
     }

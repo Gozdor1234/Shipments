@@ -5,6 +5,7 @@ import android.content.Context
 import android.location.Geocoder
 import android.view.MotionEvent
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -48,6 +49,17 @@ object Geo {
         return hit?.let { it.latitude to it.longitude }
     }
 
+    /** Where each package is now (its newest scan that has a findable location), for the overview map. */
+    suspend fun pins(ctx: Context, parcels: List<Parcel>): List<MapPin> = withContext(Dispatchers.IO) {
+        parcels.mapNotNull { p ->
+            val point = p.events.firstNotNullOfOrNull { e ->
+                if (e.lat != null && e.lon != null && !(e.lat == 0.0 && e.lon == 0.0)) e.lat to e.lon
+                else e.location?.takeIf { it.isNotBlank() }?.let { lookup(ctx, it) }
+            } ?: return@mapNotNull null
+            MapPin(p.id, point.first, point.second, p.status.color, p.title)
+        }
+    }
+
     /** Oldest-first stops, merging consecutive scans at the same place. */
     suspend fun stops(ctx: Context, events: List<TrackEvent>): List<MapStop> = withContext(Dispatchers.IO) {
         val out = mutableListOf<MapStop>()
@@ -69,20 +81,17 @@ private const val PAGE = "https://$ASSET_HOST/assets/route.html"
 private fun hex(c: Color) = ColorMath.toHex(c.toArgb())
 private fun mix(a: Color, b: Color, t: Float) = Color(ColorMath.mix(a.toArgb(), b.toArgb(), t))
 
-/**
- * Vector route map (MapLibre + OpenFreeMap), repainted in the app's current theme colors.
- * With [interactive] = false it's a static preview that reports taps through [onTap],
- * so it doesn't fight the screen's scrolling.
- */
-@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+/** A package's current spot for the home overview map. */
+data class MapPin(val id: String, val lat: Double, val lon: Double, val color: Color, val name: String)
+
+/** The map colors for the current theme, as the page's init() expects them. */
 @Composable
-fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
-             modifier: Modifier = Modifier, onTap: () -> Unit = {}) {
+private fun themeJson(interactive: Boolean, accent: Color): String {
     val cs = MaterialTheme.colorScheme
     val bg = cs.background
     val ink = cs.onSurface
     val dark = ColorMath.isDark(bg.toArgb())
-    val theme = JSONObject()
+    return JSONObject()
         .put("interactive", interactive)
         .put("bg", hex(bg))
         .put("land", hex(mix(bg, ink, 0.035f)))
@@ -92,13 +101,48 @@ fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
         .put("major", hex(mix(bg, ink, if (dark) 0.24f else 0.18f)))
         .put("boundary", hex(mix(bg, ink, 0.28f)))
         .put("label", hex(cs.onSurfaceVariant))
-        .put("accent", hex(color))
+        .put("accent", hex(accent))
         .put("past", hex(mix(bg, ink, 0.45f)))
         .toString()
-    val stopsJson = JSONArray().apply {
+}
+
+/**
+ * One package's route (MapLibre + OpenFreeMap vector map), repainted in the app's theme.
+ * With [interactive] = false it's a static preview that reports taps through [onTap],
+ * so it doesn't fight the screen's scrolling.
+ */
+@Composable
+fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
+             modifier: Modifier = Modifier, onTap: () -> Unit = {}) {
+    val data = JSONArray().apply {
         stops.forEach { put(JSONObject().put("lat", it.lat).put("lon", it.lon)) }
     }.toString()
+    MapWebView(themeJson(interactive, color), "setStops($data)", interactive, modifier, onTap) {}
+}
+
+/**
+ * Every package on the way as a dot in its status color, zoomed out only as far as needed
+ * to fit them all. Interactive mode reports dot taps through [onOpen] with the package id.
+ */
+@Composable
+fun OverviewMap(pins: List<MapPin>, interactive: Boolean, modifier: Modifier = Modifier,
+                onTap: () -> Unit = {}, onOpen: (String) -> Unit = {}) {
+    val data = JSONArray().apply {
+        pins.forEach {
+            put(JSONObject().put("id", it.id).put("lat", it.lat).put("lon", it.lon)
+                .put("color", hex(it.color)).put("name", it.name))
+        }
+    }.toString()
+    MapWebView(themeJson(interactive, MaterialTheme.colorScheme.primary), "setPackages($data)", interactive, modifier, onTap, onOpen)
+}
+
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility", "JavascriptInterface")
+@Composable
+private fun MapWebView(theme: String, dataCall: String, interactive: Boolean, modifier: Modifier,
+                       onTap: () -> Unit, onOpen: (String) -> Unit) {
     val tap = rememberUpdatedState(onTap)
+    val open = rememberUpdatedState(onOpen)
+    val bg = MaterialTheme.colorScheme.background
 
     // A theme change rebuilds the map with the new colors.
     key(theme) {
@@ -116,13 +160,14 @@ fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
                     settings.domStorageEnabled = true
                     isVerticalScrollBarEnabled = false
                     isHorizontalScrollBarEnabled = false
-                    tag = stopsJson
+                    tag = dataCall
+                    if (interactive) addJavascriptInterface(MapBridge(this) { id -> open.value(id) }, "ShipmentsMap")
                     webViewClient = object : WebViewClient() {
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? =
                             if (request.url.host == ASSET_HOST) assets.shouldInterceptRequest(request.url) else null
 
                         override fun onPageFinished(view: WebView, url: String?) {
-                            view.evaluateJavascript("init($theme); setStops(${view.tag as String})", null)
+                            view.evaluateJavascript("init($theme); ${view.tag as String}", null)
                         }
                     }
                     if (!interactive) setOnTouchListener { _, ev ->
@@ -133,12 +178,19 @@ fun RouteMap(stops: List<MapStop>, color: Color, interactive: Boolean,
                 }
             },
             update = { web ->
-                if (web.tag != stopsJson) {
-                    web.tag = stopsJson
-                    web.evaluateJavascript("if (window.T) setStops($stopsJson)", null)
+                if (web.tag != dataCall) {
+                    web.tag = dataCall
+                    web.evaluateJavascript("if (window.T) $dataCall", null)
                 }
             },
             onRelease = { it.destroy() },
         )
     }
+}
+
+/** What the map page can call back into. Public class so the WebView bridge can reach it. */
+class MapBridge(private val view: WebView, private val onOpen: (String) -> Unit) {
+    /** Called on a WebView background thread; hops to the UI thread. */
+    @JavascriptInterface
+    fun open(id: String) { view.post { onOpen(id) } }
 }

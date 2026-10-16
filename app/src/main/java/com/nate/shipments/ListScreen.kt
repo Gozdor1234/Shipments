@@ -54,6 +54,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -77,11 +84,13 @@ fun ListScreen(
     onPrefillUsed: () -> Unit,
     onOpen: (Parcel) -> Unit,
     onSettings: () -> Unit,
+    onOverview: () -> Unit,
+    onArchive: () -> Unit,
     snackHost: @Composable () -> Unit,
 ) {
+    val ctx = LocalContext.current
     var showAdd by remember { mutableStateOf(false) }
     var prefill by remember { mutableStateOf("") }
-    var showArchived by remember { mutableStateOf(false) }
     LaunchedEffect(addPrefill) {
         if (addPrefill != null) { prefill = addPrefill; showAdd = true; onPrefillUsed() }
     }
@@ -90,7 +99,12 @@ fun ListScreen(
         .sortedWith(compareBy<Parcel> { -it.status.step }.thenByDescending { it.lastChanged ?: it.addedAt })
     val delivered = parcels.filter { !it.archived && it.status == Status.DELIVERED }
         .sortedByDescending { it.lastChanged ?: it.addedAt }
-    val archived = parcels.filter { it.archived }.sortedByDescending { it.lastChanged ?: it.addedAt }
+    val archivedCount = parcels.count { it.archived }
+
+    // Where each package on the way is right now, for the overview map.
+    var pins by remember { mutableStateOf<List<MapPin>>(emptyList()) }
+    val pinKey = active.map { it.id to it.latest?.key }
+    LaunchedEffect(pinKey) { pins = Geo.pins(ctx.applicationContext, active) }
 
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -126,10 +140,22 @@ fun ListScreen(
                         }
                     }
                 }
-                if (parcels.isEmpty()) item {
+                if (pins.isNotEmpty()) item(key = "overview") {
+                    val modern = LocalModern.current
+                    Box(
+                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).height(190.dp)
+                            .then(if (modern) Modifier.neuRaised(modernPalette, 20.dp) else Modifier)
+                            .clip(RoundedCornerShape(if (modern) 20.dp else 16.dp)),
+                    ) {
+                        OverviewMap(pins, interactive = false, modifier = Modifier.fillMaxSize(), onTap = onOverview)
+                        MapAttribution(Modifier.align(Alignment.BottomEnd))
+                    }
+                }
+                if (active.isEmpty() && delivered.isEmpty()) item {
                     Column(Modifier.fillMaxWidth().padding(top = 96.dp, start = 32.dp, end = 32.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("No packages yet", style = MaterialTheme.typography.titleLarge)
+                        Text(if (archivedCount > 0) "Nothing on the way" else "No packages yet",
+                            style = MaterialTheme.typography.titleLarge)
                         Spacer(Modifier.height(8.dp))
                         Text("Tap + to add a tracking number, or share one to Shipments from any app.",
                             style = MaterialTheme.typography.bodyMedium,
@@ -144,17 +170,19 @@ fun ListScreen(
                     item { SectionHeader("Delivered") }
                     items(delivered, key = { it.id }) { ParcelRow(it, actions, onOpen) }
                 }
-                if (archived.isNotEmpty()) {
-                    item {
-                        Row(Modifier.fillMaxWidth().clickable { showArchived = !showArchived }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            Text("Archived (${archived.size})", style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            Icon(if (showArchived) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, null)
+                if (archivedCount > 0) item(key = "archive-link") {
+                    Box(Modifier.fillMaxWidth().padding(top = 20.dp), contentAlignment = Alignment.Center) {
+                        TextButton(onClick = onArchive) {
+                            Text("Archive · $archivedCount", style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    if (showArchived) items(archived, key = { it.id }) { ParcelRow(it, actions, onOpen) }
+                }
+                if (active.isNotEmpty() || delivered.isNotEmpty()) item(key = "swipe-hint") {
+                    Text("Swipe a package left to archive it.", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.fillMaxWidth().padding(top = if (archivedCount > 0) 0.dp else 20.dp),
+                        textAlign = TextAlign.Center)
                 }
             }
         }
@@ -165,54 +193,108 @@ fun ListScreen(
     }
 }
 
+/** Archived packages, reached from the quiet link at the bottom of the home list. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ArchiveScreen(parcels: List<Parcel>, actions: Actions, onOpen: (Parcel) -> Unit, onBack: () -> Unit,
+                  snackHost: @Composable () -> Unit) {
+    val archived = parcels.filter { it.archived }.sortedByDescending { it.lastChanged ?: it.addedAt }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                colors = shipmentsTopBarColors(),
+                title = { Text("Archive") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, "Back") } },
+            )
+        },
+        snackbarHost = snackHost,
+    ) { pad ->
+        LazyColumn(Modifier.fillMaxSize().padding(pad), contentPadding = PaddingValues(bottom = 32.dp)) {
+            if (archived.isEmpty()) item {
+                Text("Nothing archived.", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(top = 96.dp), textAlign = TextAlign.Center)
+            } else {
+                items(archived, key = { it.id }) { ParcelRow(it, actions, onOpen) }
+                item {
+                    Text("Swipe a package left to move it back to the home list.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.fillMaxWidth().padding(top = 20.dp), textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SectionHeader(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 4.dp))
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun ParcelRow(p: Parcel, actions: Actions, onOpen: (Parcel) -> Unit) {
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     val modern = LocalModern.current
-    Box(
-        if (modern) Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-            .neuRaised(modernPalette, 20.dp).clip(RoundedCornerShape(20.dp))
-        else Modifier
-    ) {
-        Row(
-            Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(p) }, onLongClick = { menu = true })
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            StatusBadge(p.status)
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(p.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    p.error?.let { "⚠ $it" } ?: p.latest?.description ?: p.status.label,
-                    style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    color = if (p.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    listOfNotNull(
-                        Fmt.eta(p) ?: p.status.label,
-                        p.latest?.location,
-                        p.carrierName,
-                    ).joinToString(" · "),
-                    style = MaterialTheme.typography.bodySmall, color = p.status.color, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+    val shape = RoundedCornerShape(if (modern) 20.dp else 0.dp)
+    // Swipe left toggles archive: archives from home, restores from the archive screen.
+    val swipe = rememberSwipeToDismissBoxState(confirmValueChange = { v ->
+        if (v == SwipeToDismissBoxValue.EndToStart) { actions.setArchived(p, !p.archived); true } else false
+    })
+    SwipeToDismissBox(
+        state = swipe,
+        enableDismissFromStartToEnd = false,
+        modifier = if (modern) Modifier.padding(horizontal = 12.dp, vertical = 5.dp) else Modifier,
+        backgroundContent = {
+            Box(
+                Modifier.fillMaxSize().clip(shape).background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 24.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(if (p.archived) "Move back" else "Archive", fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer)
             }
-        }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
-            DropdownMenuItem(text = { Text(if (p.archived) "Unarchive" else "Archive") },
-                onClick = { menu = false; actions.edit(p.id) { it.copy(archived = !it.archived) } })
-            DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; deleting = true })
+        },
+    ) {
+        Box(
+            if (modern) Modifier.neuRaised(modernPalette, 20.dp).clip(shape)
+            else Modifier.background(MaterialTheme.colorScheme.background)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().combinedClickable(onClick = { onOpen(p) }, onLongClick = { menu = true })
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                StatusBadge(p.status)
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(p.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        p.error?.let { "⚠ $it" } ?: p.latest?.description ?: p.status.label,
+                        style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                        color = if (p.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        listOfNotNull(
+                            Fmt.eta(p) ?: p.status.label,
+                            p.latest?.location,
+                            p.carrierName,
+                        ).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall, color = p.status.color, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
+                DropdownMenuItem(text = { Text(if (p.archived) "Move back to home" else "Archive") },
+                    onClick = { menu = false; actions.setArchived(p, !p.archived) })
+                DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; deleting = true })
+            }
         }
     }
     if (renaming) RenameDialog(p.name, onDismiss = { renaming = false }) { n ->

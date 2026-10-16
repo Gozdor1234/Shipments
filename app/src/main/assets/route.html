@@ -16,7 +16,8 @@
 <div class="msg" id="msg"></div>
 <script src="maplibre-gl.js"></script>
 <script>
-  // The app calls init(theme) once, then setStops(list) whenever the scans change.
+  // The app calls init(theme) once, then setStops(list) for one package's route, or
+  // setPackages(list) for the home overview of every package on the way.
   // theme: { interactive, bg, land, water, road, major, building, boundary, label, accent, past }
   var map = null, ready = false, pending = null, T = null;
 
@@ -40,7 +41,7 @@
       ready = true;
       repaint();
       addRouteLayers();
-      if (pending) { var p = pending; pending = null; setStops(p); }
+      if (pending) { var p = pending; pending = null; p(); }
     });
     window.addEventListener('resize', function () { map.resize(); });
     setTimeout(function () { if (!ready) showMsg("Couldn't load the map. Check your connection."); }, 15000);
@@ -74,6 +75,7 @@
   }
 
   function addRouteLayers() {
+    map.addSource('pkgs', { type: 'geojson', data: empty() });
     map.addSource('route', { type: 'geojson', data: empty() });
     map.addSource('stops', { type: 'geojson', data: empty() });
     map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
@@ -88,26 +90,58 @@
       paint: { 'circle-radius': 18, 'circle-color': T.accent, 'circle-opacity': 0.22 } });
     map.addLayer({ id: 'stop-now', type: 'circle', source: 'stops', filter: ['==', ['get', 'latest'], true],
       paint: { 'circle-radius': 8, 'circle-color': T.accent, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } });
+
+    // Home overview: one dot per package in its status color, with its name underneath.
+    map.addLayer({ id: 'pkg-halo', type: 'circle', source: 'pkgs',
+      paint: { 'circle-radius': 15, 'circle-color': ['get', 'color'], 'circle-opacity': 0.22 } });
+    map.addLayer({ id: 'pkg-dot', type: 'circle', source: 'pkgs',
+      paint: { 'circle-radius': 7, 'circle-color': ['get', 'color'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 } });
+    map.addLayer({ id: 'pkg-label', type: 'symbol', source: 'pkgs',
+      layout: { 'text-field': ['get', 'name'], 'text-font': ['Noto Sans Regular'], 'text-size': 11,
+                'text-offset': [0, 1.5], 'text-anchor': 'top', 'text-max-width': 9, 'text-optional': true },
+      paint: { 'text-color': T.label, 'text-halo-color': T.bg, 'text-halo-width': 1.5 } });
+    if (T.interactive) {
+      map.on('click', 'pkg-halo', function (e) {
+        var f = e.features && e.features[0];
+        if (f && window.ShipmentsMap) window.ShipmentsMap.open(f.properties.id);
+      });
+      map.on('mouseenter', 'pkg-halo', function () { map.getCanvas().style.cursor = 'pointer'; });
+    }
+  }
+
+  // Fit the camera to the points, zooming out only as far as needed to show them all.
+  function fit(coords, singleZoom) {
+    if (coords.length === 1) {
+      map.jumpTo({ center: coords[0], zoom: singleZoom });
+    } else if (coords.length > 1) {
+      var b = new maplibregl.LngLatBounds(coords[0], coords[0]);
+      coords.forEach(function (c) { b.extend(c); });
+      map.fitBounds(b, { padding: T.interactive ? 72 : 44, maxZoom: 11, duration: 0 });
+    }
+  }
+
+  // pkgs: [{ id, lat, lon, color, name }]
+  function setPackages(pkgs) {
+    if (!ready) { pending = function () { setPackages(pkgs); }; return; }
+    map.getSource('pkgs').setData({ type: 'FeatureCollection', features: pkgs.map(function (p) {
+      return { type: 'Feature', properties: { id: p.id, color: p.color, name: p.name },
+               geometry: { type: 'Point', coordinates: [p.lon, p.lat] } };
+    }) });
+    fit(pkgs.map(function (p) { return [p.lon, p.lat]; }), 9);
   }
 
   function empty() { return { type: 'FeatureCollection', features: [] }; }
 
   // stops: [{ lat, lon }] oldest first; the last one is where the package is now.
   function setStops(stops) {
-    if (!ready) { pending = stops; return; }
+    if (!ready) { pending = function () { setStops(stops); }; return; }
     var coords = stops.map(function (s) { return [s.lon, s.lat]; });
     map.getSource('route').setData(coords.length > 1
       ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } } : empty());
     map.getSource('stops').setData({ type: 'FeatureCollection', features: coords.map(function (c, i) {
       return { type: 'Feature', properties: { latest: i === coords.length - 1 }, geometry: { type: 'Point', coordinates: c } };
     }) });
-    if (coords.length === 1) {
-      map.jumpTo({ center: coords[0], zoom: 10 });
-    } else if (coords.length > 1) {
-      var b = new maplibregl.LngLatBounds(coords[0], coords[0]);
-      coords.forEach(function (c) { b.extend(c); });
-      map.fitBounds(b, { padding: T.interactive ? 72 : 40, maxZoom: 11, duration: 0 });
-    }
+    fit(coords, 10);
   }
 </script>
 </body>
