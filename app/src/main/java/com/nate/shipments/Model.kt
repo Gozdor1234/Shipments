@@ -4,12 +4,13 @@ import androidx.compose.ui.graphics.Color
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Ship24's status milestones, plus NOT_FOUND for numbers no carrier has reported on. */
+/** Package statuses. Trace reports pending, in_transit, out_for_delivery, customs, delivered, exception. */
 enum class Status(val label: String, val color: Color, val step: Int) {
     PENDING("Waiting for info", Color(0xFF8A94A6), 0),
     NOT_FOUND("Not found yet", Color(0xFF8A94A6), 0),
     INFO_RECEIVED("Label created", Color(0xFF6C8EBF), 0),
     IN_TRANSIT("In transit", Color(0xFF3D7BF7), 1),
+    CUSTOMS("In customs", Color(0xFF6E62E5), 1),
     OUT_FOR_DELIVERY("Out for delivery", Color(0xFFF29A1F), 2),
     AVAILABLE_FOR_PICKUP("Ready for pickup", Color(0xFF9C5CF2), 2),
     DELIVERED("Delivered", Color(0xFF2FB561), 3),
@@ -20,16 +21,13 @@ enum class Status(val label: String, val color: Color, val step: Int) {
     val isProblem get() = this == DELIVERY_FAILURE || this == EXCEPTION
 
     companion object {
-        fun fromShip24(s: String?): Status = when (s) {
-            "info_received" -> INFO_RECEIVED
+        fun fromTrace(s: String?): Status = when (s) {
             "in_transit" -> IN_TRANSIT
             "out_for_delivery" -> OUT_FOR_DELIVERY
-            "available_for_pickup" -> AVAILABLE_FOR_PICKUP
+            "customs" -> CUSTOMS
             "delivered" -> DELIVERED
-            "failed_attempt" -> DELIVERY_FAILURE
             "exception" -> EXCEPTION
-            "expired" -> EXPIRED
-            else -> PENDING // "pending", "unknown", or missing
+            else -> PENDING // "pending" or missing
         }
     }
 }
@@ -75,11 +73,9 @@ data class Parcel(
     val id: String,
     val number: String,
     val name: String,
-    /** Ship24 courier code (e.g. "us-post"); null = let Ship24 auto-detect. */
+    /** Trace carrier code (e.g. "usps"); null = let Trace auto-detect. */
     val courier: String? = null,
     val carrierName: String? = null,
-    /** Ship24 tracker id, set once the number has been registered. */
-    val trackerId: String? = null,
     val status: Status = Status.PENDING,
     val subStatus: String? = null,
     val events: List<TrackEvent> = emptyList(),
@@ -93,12 +89,11 @@ data class Parcel(
 ) {
     val latest: TrackEvent? get() = events.firstOrNull()
     val title get() = name.ifBlank { number }
-    val registered get() = trackerId != null
 
     fun toJson() = JSONObject().apply {
         put("id", id); put("number", number); put("name", name)
         put("courier", courier ?: JSONObject.NULL); put("carrierName", carrierName ?: JSONObject.NULL)
-        put("trackerId", trackerId ?: JSONObject.NULL); put("status", status.name)
+        put("status", status.name)
         put("subStatus", subStatus ?: JSONObject.NULL)
         put("events", JSONArray().apply { events.forEach { put(it.toJson()) } })
         put("etaFrom", etaFrom ?: JSONObject.NULL); put("etaTo", etaTo ?: JSONObject.NULL)
@@ -115,7 +110,6 @@ data class Parcel(
             name = o.str("name") ?: "",
             courier = o.str("courier"),
             carrierName = o.str("carrierName"),
-            trackerId = o.str("trackerId"),
             status = runCatching { Status.valueOf(o.getString("status")) }.getOrDefault(Status.PENDING),
             subStatus = o.str("subStatus"),
             events = o.optJSONArray("events")?.objects()?.map(TrackEvent::fromJson) ?: emptyList(),

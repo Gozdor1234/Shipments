@@ -69,15 +69,15 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Ship24 API key", style = MaterialTheme.typography.titleMedium)
+            Text("Trace API key", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Sign up free at ship24.com, choose the free Tracking API plan, and copy the Default key from the API keys page of your dashboard. " +
+                "Sign up free at traceapi.dev (email only), then create an API key in your dashboard. It starts with trc_. " +
                     "The key is stored only on this phone.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TextButton(onClick = {
-                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.ship24.com/integrations/api-keys"))) }
-            }) { Text("Open Ship24 dashboard") }
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://traceapi.dev/dashboard/api-keys"))) }
+            }) { Text("Open Trace dashboard") }
             OutlinedTextField(
                 value = key, onValueChange = { key = it }, singleLine = true, label = { Text("API key") },
                 modifier = Modifier.fillMaxWidth(),
@@ -95,9 +95,8 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
                     scope.launch {
                         quotaText = try {
                             withContext(Dispatchers.IO) {
-                                Carriers.clearCache(ctx)
-                                val n = Ship24(key.trim()).couriers().size
-                                "Key works. $n carriers available."
+                                Trace(key.trim()).testKey()
+                                "Key works. (The test doesn't use a lookup.)"
                             }
                         } catch (e: Exception) {
                             "Key test failed: ${e.message ?: e.javaClass.simpleName}"
@@ -112,11 +111,12 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             Text("Background refresh", style = MaterialTheme.typography.titleMedium)
             Text(
                 "How often to check for updates while the app is closed. Android may stretch this to save battery. " +
-                    "Checking doesn't count against your Ship24 allowance; only adding a new number does (10 a month on the free plan).",
+                    "Every check of every package uses one of your 1,000 free Trace lookups a month, so slower is cheaper. " +
+                    "At 3 hours, 5 packages in transit use about 40 a day.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(15 to "15 min", 30 to "30 min", 60 to "1 hr", 120 to "2 hr").forEach { (m, label) ->
+                listOf(60 to "1 hr", 120 to "2 hr", 180 to "3 hr", 360 to "6 hr").forEach { (m, label) ->
                     FilterChip(selected = interval == m, label = { Text(label) }, onClick = {
                         interval = m
                         Settings.setInterval(ctx, m)
@@ -124,6 +124,12 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
                     })
                 }
             }
+
+            Text(
+                "About ${Settings.lookupsThisMonth(ctx)} lookups used this month on this phone. " +
+                    "Your Trace dashboard has the exact count.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -138,7 +144,7 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             HorizontalDivider()
             Spacer(Modifier.height(4.dp))
             Text(
-                "Shipments by ChickenMyBobbers. Tracking data from Ship24. Maps © OpenStreetMap contributors.",
+                "Shipments by ChickenMyBobbers. Tracking data from Trace (traceapi.dev). Maps © OpenStreetMap contributors.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

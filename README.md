@@ -5,7 +5,7 @@ A package tracker for Android in the spirit of Parcel and Deliveries on iOS. A f
 ## Features
 
 - Add a package by tracking number (paste, type, or share text into the app from any email or message)
-- Carrier detected automatically, or pick from Ship24's 1,000+ carriers
+- Carrier detected automatically (USPS, UPS, FedEx, DHL and more), or set it yourself
 - Status timeline grouped by day, with progress bar and estimated delivery
 - Route map of scan locations (OpenStreetMap, no Google account needed)
 - Background refresh with notifications when a status or location changes
@@ -14,14 +14,15 @@ A package tracker for Android in the spirit of Parcel and Deliveries on iOS. A f
 
 ## Setup
 
-1. Sign up at [ship24.com](https://www.ship24.com), choose the free Tracking API plan, and copy your Default API key from the dashboard.
+1. Sign up free at [traceapi.dev](https://traceapi.dev) (email only, no card) and create an API key (starts with `trc_`).
 2. Install the latest APK from [Releases](../../releases/latest).
 3. Open Shipments, go to Settings, paste the key, and tap **Test key**.
 
 ## Notes and limits
 
-- **Shipment allowance:** Ship24's free plan covers 10 new tracking numbers per month. Each number added uses one; refreshing numbers you already added doesn't.
-- **Key on the phone:** Ship24 recommends keeping API keys out of client apps. That matters for apps you distribute; here it's your own key on your own phone, stored in app-private storage and excluded from backups.
+- **Lookup allowance:** Trace's free plan is 1,000 lookups a month, and every check of every package uses one (cached results included). Background checks default to every 3 hours, and packages checked in the last 30 minutes are skipped when the app opens.
+- **Data source:** Trace doesn't say how it gets carrier data, and carrier coverage isn't guaranteed. If a carrier stops returning results, that's on Trace's side.
+- **Key on the phone:** Trace recommends keeping API keys on a server. That matters for apps you distribute; here it's your own key on your own phone, stored in app-private storage and excluded from backups.
 - **Amazon Logistics (TBA...) numbers** are often not trackable by third parties.
 - **Map accuracy:** carriers usually report scan locations as text ("ROMULUS, MI, US"), which the phone converts to map points. Expect a rough route, and no map on phones without Google's geocoding service.
 - **Background timing:** Android won't run background checks more often than every 15 minutes and may delay them further to save battery.

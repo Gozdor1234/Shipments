@@ -60,9 +60,23 @@ object Settings {
     fun apiKey(ctx: Context): String? = prefs(ctx).getString("apiKey", null)?.trim()?.takeIf { it.isNotEmpty() }
     fun setApiKey(ctx: Context, v: String) = prefs(ctx).edit().putString("apiKey", v.trim()).apply()
 
-    /** Background refresh interval in minutes. Android's floor is 15. */
-    fun interval(ctx: Context): Int = prefs(ctx).getInt("interval", 30)
+    /**
+     * Background refresh interval in minutes. Every check uses a Trace lookup, so the
+     * default (3 hours) keeps a handful of packages well inside 1,000 lookups a month.
+     */
+    fun interval(ctx: Context): Int = prefs(ctx).getInt("interval", 180).let { if (it < 60) 180 else it }
     fun setInterval(ctx: Context, v: Int) = prefs(ctx).edit().putInt("interval", v).apply()
+
+    /** Lookups this app has used this calendar month (Trace's own count is the real one). */
+    fun lookupsThisMonth(ctx: Context): Int {
+        val p = prefs(ctx)
+        return if (p.getString("lookupMonth", null) == month()) p.getInt("lookups", 0) else 0
+    }
+    @Synchronized fun countLookup(ctx: Context) {
+        val n = lookupsThisMonth(ctx) + 1
+        prefs(ctx).edit().putString("lookupMonth", month()).putInt("lookups", n).apply()
+    }
+    private fun month() = java.time.YearMonth.now().toString()
 
     fun notify(ctx: Context): Boolean = prefs(ctx).getBoolean("notify", true)
     fun setNotify(ctx: Context, v: Boolean) = prefs(ctx).edit().putBoolean("notify", v).apply()

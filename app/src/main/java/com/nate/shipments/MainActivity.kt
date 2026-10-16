@@ -70,11 +70,11 @@ class Actions(
     private val toast: (String) -> Unit,
     private val setRefreshing: (Boolean) -> Unit,
 ) {
-    fun refresh(onlyIds: Set<String>? = null, quiet: Boolean = false) {
+    fun refresh(onlyIds: Set<String>? = null, quiet: Boolean = false, minAgeMs: Long = 0) {
         scope.launch {
             setRefreshing(true)
             try {
-                Tracker.refresh(ctx, onlyIds)
+                Tracker.refresh(ctx, onlyIds, minAgeMs)
             } catch (e: MissingKeyException) {
                 if (!quiet) toast(e.message ?: "Add your API key in Settings.")
             } catch (e: Exception) {
@@ -101,25 +101,13 @@ class Actions(
 
     fun delete(p: Parcel) = scope.launch {
         Store.update(ctx) { list -> list.filterNot { it.id == p.id } }
-        // Tell Ship24 to stop tracking it too. This doesn't refund the shipment; failures are harmless.
-        val tracker = p.trackerId
-        Settings.apiKey(ctx)?.takeIf { tracker != null }?.let { key ->
-            withContext(Dispatchers.IO) { runCatching { Ship24(key).unsubscribe(tracker!!) } }
-        }
     }
 
     fun changeCarrier(p: Parcel, c: Carrier?) = scope.launch {
-        if (c == null || c.code == p.courier) return@launch
-        val key = Settings.apiKey(ctx)
-        val tracker = p.trackerId
-        if (tracker != null && key != null) {
-            val err = withContext(Dispatchers.IO) {
-                runCatching { Ship24(key).setCourier(tracker, c.code) }.exceptionOrNull()
-            }
-            if (err != null) { toast("Ship24 wouldn't switch the carrier: ${err.message}"); return@launch }
-        }
+        val code = c?.code
+        if (code == p.courier) return@launch
         Store.edit(ctx, p.id) {
-            it.copy(courier = c.code, carrierName = c.name, events = emptyList(), status = Status.PENDING)
+            it.copy(courier = code, carrierName = c?.name, events = emptyList(), status = Status.PENDING, error = null)
         }
         refresh(setOf(p.id))
     }
@@ -147,7 +135,8 @@ fun App(openId: String?, onOpened: () -> Unit, sharedText: String?, onSharedHand
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) { Store.load(ctx.applicationContext) }
-        if (Settings.apiKey(ctx) != null) actions.refresh(quiet = true)
+        // On open, only re-check packages that haven't been checked in the last 30 minutes.
+        if (Settings.apiKey(ctx) != null) actions.refresh(quiet = true, minAgeMs = 30 * 60_000L)
     }
     LaunchedEffect(openId) {
         if (openId != null) { stackText = "list|detail:$openId"; onOpened() }

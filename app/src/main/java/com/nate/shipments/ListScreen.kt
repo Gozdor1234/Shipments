@@ -118,7 +118,7 @@ fun ListScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     ) {
                         Column(Modifier.padding(16.dp)) {
-                            Text("Add your Ship24 key", fontWeight = FontWeight.SemiBold)
+                            Text("Add your Trace key", fontWeight = FontWeight.SemiBold)
                             Text("Tracking needs a free API key. Tap to open Settings.",
                                 style = MaterialTheme.typography.bodyMedium)
                         }
@@ -232,7 +232,7 @@ fun ConfirmDelete(p: Parcel, onDismiss: () -> Unit, onConfirm: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Delete ${p.title}?") },
-        text = { Text("It will be removed from this phone and Ship24 will stop tracking it. Adding it again later may use another shipment from your monthly allowance.") },
+        text = { Text("It will be removed from this phone.") },
         confirmButton = { TextButton(onClick = onConfirm) { Text("Delete") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -296,16 +296,13 @@ private fun AddSheet(prefill: String, onDismiss: () -> Unit, onAdd: (String, Str
     if (picking) CarrierPicker(onDismiss = { picking = false }) { carrier = it; picking = false }
 }
 
-/** Search all of Ship24's carriers. Picking null means "detect automatically". */
+/** Pick a carrier. Picking null means "detect automatically". */
 @Composable
 fun CarrierPicker(onDismiss: () -> Unit, onPick: (Carrier?) -> Unit) {
-    val ctx = LocalContext.current
     var query by remember { mutableStateOf("") }
-    var all by remember { mutableStateOf<List<Carrier>?>(null) }
-    LaunchedEffect(Unit) { all = withContext(Dispatchers.IO) { Carriers.all(ctx.applicationContext) } }
-    val list = all ?: emptyList()
-    val shown = remember(query, all) {
-        if (query.isBlank()) Carriers.pinned(list)
+    val list = Carriers.all
+    val shown = remember(query) {
+        if (query.isBlank()) list
         else list.filter { it.name.contains(query.trim(), ignoreCase = true) }
             .sortedBy { !it.name.startsWith(query.trim(), ignoreCase = true) }.take(100)
     }
@@ -328,11 +325,7 @@ fun CarrierPicker(onDismiss: () -> Unit, onPick: (Carrier?) -> Unit) {
                     }
                     if (shown.isEmpty()) item {
                         Text(
-                            when {
-                                all == null -> "Loading carriers..."
-                                list.isEmpty() -> "Couldn't load the carrier list. Check your Ship24 key in Settings."
-                                else -> "No carriers match."
-                            },
+                            "No match. Leave it on automatic and Trace will try to detect it.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 12.dp),
                         )

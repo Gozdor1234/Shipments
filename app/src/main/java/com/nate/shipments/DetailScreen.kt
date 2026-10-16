@@ -133,8 +133,8 @@ fun DetailScreen(
             }
             if (p.events.isEmpty()) item {
                 Text(
-                    if (p.registered) "No scans yet. Some carriers only report once the package is actually handed over, so this can take a day."
-                    else "Waiting to register this number with Ship24.",
+                    if (p.lastChecked != null) "No scans yet. Some carriers only report once the package is actually handed over, so this can take a day."
+                    else "Checking with Trace...",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(24.dp),
                 )

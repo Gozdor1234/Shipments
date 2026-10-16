@@ -57,7 +57,7 @@ val Status.icon: ImageVector
     get() = when (this) {
         Status.PENDING, Status.NOT_FOUND, Status.EXPIRED -> Icons.Filled.Info
         Status.INFO_RECEIVED -> Icons.Filled.ShoppingCart
-        Status.IN_TRANSIT -> Icons.Filled.Send
+        Status.IN_TRANSIT, Status.CUSTOMS -> Icons.Filled.Send
         Status.OUT_FOR_DELIVERY -> Icons.Filled.Home
         Status.AVAILABLE_FOR_PICKUP -> Icons.Filled.Place
         Status.DELIVERED -> Icons.Filled.CheckCircle
