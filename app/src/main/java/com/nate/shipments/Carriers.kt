@@ -3,67 +3,58 @@ package com.nate.shipments
 import android.content.Context
 import android.net.Uri
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 
-data class Carrier(val key: Int, val name: String, val url: String?)
+data class Carrier(val code: String, val name: String, val url: String?)
 
 object Carriers {
-    const val USPS = 21051
-    const val UPS = 100002
-    const val FEDEX = 100003
-    const val DHL = 100001
-    const val ONTRAC = 100049
-    const val LASERSHIP = 100052
-    const val CANADA_POST = 3041
+    /** Pinned to the top of the picker when found in Ship24's list (matched by name). */
+    private val pinnedNames = listOf("USPS", "UPS", "FedEx", "DHL Express", "Amazon", "OnTrac", "LaserShip", "Canada Post")
 
-    /** Shown at the top of the picker; codes confirmed against 17TRACK's carrier list. */
-    val common = listOf(
-        Carrier(USPS, "USPS", "https://www.usps.com/"),
-        Carrier(UPS, "UPS", "https://www.ups.com/"),
-        Carrier(FEDEX, "FedEx", "https://www.fedex.com/"),
-        Carrier(DHL, "DHL Express", "https://www.dhl.com/"),
-        Carrier(ONTRAC, "OnTrac", "https://www.ontrac.com/"),
-        Carrier(LASERSHIP, "LaserShip", "https://www.lasership.com/"),
-        Carrier(CANADA_POST, "Canada Post", "https://www.canadapost-postescanada.ca/"),
-    )
-
-    private const val LIST_URL = "https://res.17track.net/asset/carrier/info/apicarrier.all.json"
     @Volatile private var all: List<Carrier>? = null
 
-    /** The full 17TRACK carrier list (~3,000), downloaded once and cached on the phone. */
+    private fun cacheFile(ctx: Context) = File(ctx.filesDir, "couriers.json")
+
+    /**
+     * Ship24's courier list (1,000+), fetched with the user's key and cached for 30 days.
+     * Returns an empty list if there's no key yet and nothing cached.
+     */
     fun all(ctx: Context): List<Carrier> {
         all?.let { return it }
-        val cache = File(ctx.filesDir, "carriers.json")
-        val text = runCatching {
-            if (cache.exists() && System.currentTimeMillis() - cache.lastModified() < 30L * 86_400_000) {
-                cache.readText()
-            } else {
-                val conn = URL(LIST_URL).openConnection() as HttpURLConnection
-                conn.connectTimeout = 15_000; conn.readTimeout = 30_000
-                conn.inputStream.bufferedReader().use { it.readText() }.also { cache.writeText(it) }
+        val cache = cacheFile(ctx)
+        val fresh = cache.exists() && System.currentTimeMillis() - cache.lastModified() < 30L * 86_400_000
+        if (!fresh) {
+            Settings.apiKey(ctx)?.let { key ->
+                runCatching { Ship24(key).couriers() }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { list ->
+                    cache.writeText(JSONArray().apply {
+                        list.forEach { put(JSONObject().put("code", it.code).put("name", it.name).put("url", it.url ?: JSONObject.NULL)) }
+                    }.toString())
+                    return list.also { all = it }
+                }
             }
-        }.getOrElse { if (cache.exists()) cache.readText() else null }
-        val parsed = text?.let { t ->
-            runCatching {
-                JSONArray(t).objects().mapNotNull { o ->
-                    val key = o.optInt("key", 0)
-                    val name = o.str("_name") ?: return@mapNotNull null
-                    if (key > 0) Carrier(key, name, o.str("_url")) else null
-                }.distinctBy { it.key }
-            }.getOrNull()
         }
-        return (parsed ?: common).also { if (parsed != null) all = it }
+        val cached = runCatching {
+            JSONArray(cache.readText()).objects().map { Carrier(it.getString("code"), it.getString("name"), it.str("url")) }
+        }.getOrNull()
+        return (cached ?: emptyList()).also { if (cached != null) all = it }
     }
 
-    fun name(ctx: Context, key: Int): String? =
-        common.firstOrNull { it.key == key }?.name ?: all?.firstOrNull { it.key == key }?.name
-            ?: if (key > 0) runCatching { all(ctx).firstOrNull { it.key == key }?.name }.getOrNull() else null
+    fun clearCache(ctx: Context) { all = null; cacheFile(ctx).delete() }
+
+    /** Popular carriers first, for the picker's default view. */
+    fun pinned(list: List<Carrier>): List<Carrier> =
+        pinnedNames.mapNotNull { n -> list.firstOrNull { it.name.equals(n, true) } ?: list.firstOrNull { it.name.startsWith(n, true) } }
+            .distinctBy { it.code }
+
+    fun name(ctx: Context, code: String?): String? {
+        code ?: return null
+        return (all ?: runCatching { all(ctx) }.getOrNull())?.firstOrNull { it.code == code }?.name
+    }
 
     /**
      * A local guess from the number's shape, only used as a hint in the add screen.
-     * 17TRACK does the real detection; these patterns are deliberately loose.
+     * Ship24 does the real detection; these patterns are deliberately loose.
      */
     fun guess(raw: String): String? {
         val n = clean(raw)
@@ -94,14 +85,16 @@ object Carriers {
             .filter { s -> s.count { it.isDigit() } >= 6 }.maxByOrNull { it.length }
     }
 
-    fun trackingUrl(ctx: Context, p: Parcel): Uri {
+    /** The carrier's own tracking page when we know it, otherwise Ship24's public page. */
+    fun trackingUrl(p: Parcel): Uri {
         val n = Uri.encode(p.number)
-        val url = when (p.carrier) {
-            USPS -> "https://tools.usps.com/go/TrackConfirmAction?tLabels=$n"
-            UPS -> "https://www.ups.com/track?tracknum=$n"
-            FEDEX -> "https://www.fedex.com/fedextrack/?trknbr=$n"
-            DHL -> "https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=$n"
-            else -> "https://t.17track.net/en#nums=$n"
+        val who = (p.carrierName ?: "").lowercase()
+        val url = when {
+            p.courier == "us-post" || who == "usps" -> "https://tools.usps.com/go/TrackConfirmAction?tLabels=$n"
+            who == "ups" || who.startsWith("ups ") -> "https://www.ups.com/track?tracknum=$n"
+            who.startsWith("fedex") -> "https://www.fedex.com/fedextrack/?trknbr=$n"
+            who.startsWith("dhl") -> "https://www.dhl.com/us-en/home/tracking.html?tracking-id=$n&submit=1"
+            else -> "https://www.ship24.com/tracking?p=$n"
         }
         return Uri.parse(url)
     }

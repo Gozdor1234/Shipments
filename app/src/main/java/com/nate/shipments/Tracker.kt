@@ -24,18 +24,18 @@ import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-class MissingKeyException : Exception("Add your 17TRACK API key in Settings first.")
+class MissingKeyException : Exception("Add your Ship24 API key in Settings first.")
 
 object Tracker {
 
     /** Delivered packages stop being polled after this long. */
     private const val DELIVERED_GRACE_MS = 2L * 86_400_000
 
-    fun newParcel(number: String, name: String, carrier: Int, carrierName: String?) = Parcel(
+    fun newParcel(number: String, name: String, courier: String?, carrierName: String?) = Parcel(
         id = UUID.randomUUID().toString(),
         number = Carriers.clean(number),
         name = name.trim(),
-        carrier = carrier,
+        courier = courier,
         carrierName = carrierName,
     )
 
@@ -43,82 +43,52 @@ object Tracker {
         !(p.status == Status.DELIVERED && now - (p.lastChanged ?: p.addedAt) > DELIVERED_GRACE_MS)
 
     /**
-     * Registers any new numbers with 17TRACK, then pulls tracking for everything that's
-     * still moving (or only [onlyIds] if given). Returns the packages whose status or
-     * latest scan changed.
+     * Registers new numbers with Ship24 (uses one shipment from the allowance each), then
+     * pulls results for everything still moving (or only [onlyIds] if given).
+     * Returns the packages whose status or latest scan changed.
      */
     suspend fun refresh(ctx: Context, onlyIds: Set<String>? = null): List<Parcel> = withContext(Dispatchers.IO) {
         val key = Settings.apiKey(ctx) ?: throw MissingKeyException()
-        val api = Track17(key)
+        val api = Ship24(key)
         val now = System.currentTimeMillis()
         val targets = Store.load(ctx).filter { if (onlyIds != null) it.id in onlyIds else wantsRefresh(it, now) }
         if (targets.isEmpty()) return@withContext emptyList()
 
-        // 1. Register numbers 17TRACK hasn't seen yet (this is the step that uses quota).
-        val regResults = mutableMapOf<String, Pair<Int?, String?>>() // id -> (carrier, error)
-        targets.filter { !it.registered }.chunked(40).forEach { chunk ->
-            val res = api.register(chunk.map { it.number to it.carrier })
-            for (p in chunk) {
-                val ok = res.accepted.firstOrNull { it.str("number")?.equals(p.number, true) == true }
-                val bad = res.rejected.firstOrNull { it.number.equals(p.number, true) }
-                regResults[p.id] = when {
-                    ok != null -> ok.optInt("carrier", p.carrier) to null
-                    bad != null && bad.alreadyRegistered -> p.carrier to null
-                    bad != null -> null to bad.message
-                    else -> null to "17TRACK didn't accept this number."
-                }
-            }
-        }
-        if (regResults.isNotEmpty()) Store.update(ctx) { list ->
-            list.map { p ->
-                val (carrier, err) = regResults[p.id] ?: return@map p
-                if (err != null) p.copy(error = err, lastChecked = now)
-                else p.copy(registered = true, carrier = carrier ?: p.carrier, error = null)
-            }
-        }
-
-        // 2. Fetch tracking for everything registered.
-        val ready = Store.load(ctx).filter { p -> targets.any { it.id == p.id } && p.registered }
-        val updates = mutableMapOf<String, TrackUpdate?>()
-        val carriers = mutableMapOf<String, Int>()
-        val errors = mutableMapOf<String, Rejection>()
-        ready.chunked(40).forEach { chunk ->
-            val res = api.trackInfo(chunk.map { it.number to it.carrier })
-            for (p in chunk) {
-                val entry = res.accepted.firstOrNull {
-                    it.str("number")?.equals(p.number, true) == true &&
-                        (p.carrier <= 0 || it.optInt("carrier", p.carrier) == p.carrier)
-                } ?: res.accepted.firstOrNull { it.str("number")?.equals(p.number, true) == true }
-                if (entry != null) {
-                    updates[p.id] = TrackParser.parse(entry)
-                    entry.optInt("carrier", 0).takeIf { it > 0 }?.let { carriers[p.id] = it }
-                } else {
-                    res.rejected.firstOrNull { it.number.equals(p.number, true) }?.let { errors[p.id] = it }
-                }
+        val updates = mutableMapOf<String, TrackUpdate>()
+        val errors = mutableMapOf<String, Pair<String, Boolean>>() // id -> (message, tracker lost)
+        for (p in targets) {
+            try {
+                val tracking = if (p.trackerId == null) api.createAndTrack(p.number, p.courier, p.id)
+                else api.results(p.trackerId)
+                if (tracking != null) updates[p.id] = TrackParser.parse(tracking)
+                else errors[p.id] = "Ship24 returned no result for this number." to false
+            } catch (e: Ship24Exception) {
+                // A bad key affects every package, so surface it instead of tagging each one.
+                if (e.http == 401 || e.http == 403) throw e
+                errors[p.id] = (e.message ?: "Ship24 error") to (e.http == 404 && p.trackerId != null)
             }
         }
 
         val changed = mutableListOf<Parcel>()
         Store.update(ctx) { list ->
             list.map { p ->
-                if (p.id !in updates && p.id !in errors) return@map p
-                errors[p.id]?.let { rej ->
-                    // If 17TRACK lost the registration, re-register next time round.
-                    return@map p.copy(lastChecked = now, error = rej.message, registered = !rej.notRegistered)
+                errors[p.id]?.let { (msg, lost) ->
+                    return@map p.copy(lastChecked = now, error = msg, trackerId = if (lost) null else p.trackerId)
                 }
-                val u = updates[p.id] ?: return@map p.copy(lastChecked = now, error = null)
-                val carrier = carriers[p.id] ?: p.carrier
-                val newStatus = if (u.status == Status.NOT_FOUND && u.events.isEmpty() &&
-                    now - p.addedAt < 86_400_000) Status.PENDING else u.status
+                val u = updates[p.id] ?: return@map p
+                val courier = u.courier ?: p.courier
+                val newStatus = if (u.status == Status.PENDING && u.events.isEmpty() &&
+                    now - p.addedAt > 86_400_000) Status.NOT_FOUND else u.status
                 val isChange = newStatus != p.status || u.events.firstOrNull()?.key != p.latest?.key
                 val next = p.copy(
+                    trackerId = u.trackerId ?: p.trackerId,
                     status = newStatus,
-                    subStatus = u.subStatus,
+                    subStatus = u.statusCode,
                     events = u.events.ifEmpty { p.events },
                     etaFrom = u.etaFrom,
                     etaTo = u.etaTo,
-                    carrier = carrier,
-                    carrierName = u.carrierName ?: p.carrierName ?: Carriers.name(ctx, carrier),
+                    courier = courier,
+                    carrierName = Carriers.name(ctx, courier) ?: p.carrierName,
                     lastChecked = now,
                     lastChanged = if (isChange) now else p.lastChanged,
                     error = null,

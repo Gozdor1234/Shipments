@@ -26,8 +26,7 @@ import java.util.Locale
 data class MapStop(val point: GeoPoint, val label: String, val detail: String)
 
 /**
- * Turns scan locations into map points. 17TRACK sometimes includes coordinates;
- * otherwise the location text ("ROMULUS, MI, US") is geocoded on the phone and cached.
+ * Turns scan locations into map points. Ship24 gives locations as text, so the text ("ROMULUS, MI, US") is geocoded on the phone and cached.
  */
 object Geo {
     private const val PREFS = "geocache"

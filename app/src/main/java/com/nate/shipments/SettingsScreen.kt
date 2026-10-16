@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -70,15 +69,15 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("17TRACK API key", style = MaterialTheme.typography.titleMedium)
+            Text("Ship24 API key", style = MaterialTheme.typography.titleMedium)
             Text(
-                "Sign up free at api.17track.net and copy the API key from your dashboard there. " +
+                "Sign up free at ship24.com, choose the free Tracking API plan, and copy the Default key from the API keys page of your dashboard. " +
                     "The key is stored only on this phone.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             TextButton(onClick = {
-                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://api.17track.net/en"))) }
-            }) { Text("Open api.17track.net") }
+                runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dashboard.ship24.com/integrations/api-keys"))) }
+            }) { Text("Open Ship24 dashboard") }
             OutlinedTextField(
                 value = key, onValueChange = { key = it }, singleLine = true, label = { Text("API key") },
                 modifier = Modifier.fillMaxWidth(),
@@ -95,7 +94,11 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
                     testing = true
                     scope.launch {
                         quotaText = try {
-                            describeQuota(withContext(Dispatchers.IO) { Track17(key.trim()).quota() })
+                            withContext(Dispatchers.IO) {
+                                Carriers.clearCache(ctx)
+                                val n = Ship24(key.trim()).couriers().size
+                                "Key works. $n carriers available."
+                            }
                         } catch (e: Exception) {
                             "Key test failed: ${e.message ?: e.javaClass.simpleName}"
                         }
@@ -109,7 +112,7 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             Text("Background refresh", style = MaterialTheme.typography.titleMedium)
             Text(
                 "How often to check for updates while the app is closed. Android may stretch this to save battery. " +
-                    "Checking doesn't use 17TRACK credits; only adding new numbers does.",
+                    "Checking doesn't count against your Ship24 allowance; only adding a new number does (10 a month on the free plan).",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -135,21 +138,9 @@ fun SettingsScreen(onBack: () -> Unit, toast: (String) -> Unit, snackHost: @Comp
             HorizontalDivider()
             Spacer(Modifier.height(4.dp))
             Text(
-                "Shipments by ChickenMyBobbers. Tracking data from 17TRACK. Maps © OpenStreetMap contributors.",
+                "Shipments by ChickenMyBobbers. Tracking data from Ship24. Maps © OpenStreetMap contributors.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
-}
-
-/** 17TRACK's quota response fields aren't documented in detail, so show what's there. */
-private fun describeQuota(data: JSONObject): String {
-    val total = data.longOrNull("quota_total")
-    val used = data.longOrNull("quota_used")
-    val remain = data.longOrNull("quota_remain") ?: if (total != null && used != null) total - used else null
-    if (remain != null) {
-        return "Key works. " + (if (total != null) "$remain of $total tracking credits left." else "$remain tracking credits left.")
-    }
-    val nums = data.keys().asSequence().filter { data.opt(it) is Number }.map { "$it: ${data.opt(it)}" }.toList()
-    return if (nums.isEmpty()) "Key works." else "Key works. " + nums.joinToString(", ")
 }

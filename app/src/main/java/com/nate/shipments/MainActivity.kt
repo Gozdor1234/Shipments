@@ -85,11 +85,11 @@ class Actions(
         }
     }
 
-    fun add(number: String, name: String, carrier: Int, carrierName: String?): Boolean {
+    fun add(number: String, name: String, courier: String?, carrierName: String?): Boolean {
         val clean = Carriers.clean(number)
         if (clean.length < 5) { toast("That doesn't look like a tracking number."); return false }
         if (Store.parcels.value.any { it.number == clean }) { toast("You're already tracking that number."); return false }
-        val p = Tracker.newParcel(clean, name, carrier, carrierName)
+        val p = Tracker.newParcel(clean, name, courier, carrierName)
         scope.launch {
             Store.update(ctx) { listOf(p) + it }
             refresh(setOf(p.id))
@@ -101,24 +101,25 @@ class Actions(
 
     fun delete(p: Parcel) = scope.launch {
         Store.update(ctx) { list -> list.filterNot { it.id == p.id } }
-        // Tell 17TRACK to stop tracking it too. This doesn't refund quota; failures are harmless.
-        Settings.apiKey(ctx)?.takeIf { p.registered }?.let { key ->
-            withContext(Dispatchers.IO) { runCatching { Track17(key).delete(p.number, p.carrier) } }
+        // Tell Ship24 to stop tracking it too. This doesn't refund the shipment; failures are harmless.
+        val tracker = p.trackerId
+        Settings.apiKey(ctx)?.takeIf { tracker != null }?.let { key ->
+            withContext(Dispatchers.IO) { runCatching { Ship24(key).unsubscribe(tracker!!) } }
         }
     }
 
     fun changeCarrier(p: Parcel, c: Carrier?) = scope.launch {
-        val newKey = c?.key ?: 0
+        if (c == null || c.code == p.courier) return@launch
         val key = Settings.apiKey(ctx)
-        if (p.registered && p.carrier > 0 && newKey > 0 && key != null) {
-            val ok = withContext(Dispatchers.IO) {
-                runCatching { Track17(key).changeCarrier(p.number, p.carrier, newKey) }
-            }.fold({ it.rejected.isEmpty() }, { false })
-            if (!ok) { toast("17TRACK wouldn't switch the carrier."); return@launch }
+        val tracker = p.trackerId
+        if (tracker != null && key != null) {
+            val err = withContext(Dispatchers.IO) {
+                runCatching { Ship24(key).setCourier(tracker, c.code) }.exceptionOrNull()
+            }
+            if (err != null) { toast("Ship24 wouldn't switch the carrier: ${err.message}"); return@launch }
         }
         Store.edit(ctx, p.id) {
-            it.copy(carrier = newKey, carrierName = c?.name, events = emptyList(), status = Status.PENDING,
-                registered = it.registered && newKey > 0)
+            it.copy(courier = c.code, carrierName = c.name, events = emptyList(), status = Status.PENDING)
         }
         refresh(setOf(p.id))
     }

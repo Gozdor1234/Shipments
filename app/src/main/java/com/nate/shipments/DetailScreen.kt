@@ -88,7 +88,7 @@ fun DetailScreen(
                         DropdownMenuItem(text = { Text("Change carrier") }, onClick = { menu = false; pickingCarrier = true })
                         DropdownMenuItem(text = { Text("Open carrier website") }, onClick = {
                             menu = false
-                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Carriers.trackingUrl(ctx, p))) }
+                            runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Carriers.trackingUrl(p))) }
                         })
                         DropdownMenuItem(text = { Text("Share tracking number") }, onClick = {
                             menu = false
@@ -133,8 +133,8 @@ fun DetailScreen(
             }
             if (p.events.isEmpty()) item {
                 Text(
-                    if (p.registered) "No scans yet. New numbers can take a few minutes to show up at 17TRACK, and some carriers only report once the package is handed over."
-                    else "Waiting to register this number with 17TRACK.",
+                    if (p.registered) "No scans yet. Some carriers only report once the package is actually handed over, so this can take a day."
+                    else "Waiting to register this number with Ship24.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(24.dp),
                 )
