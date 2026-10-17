@@ -27,35 +27,81 @@ import java.util.Locale
 
 data class MapStop(val lat: Double, val lon: Double, val label: String, val detail: String)
 
+/** One package's mapped route, plus scan locations that couldn't be placed (shown as a note, never silently dropped). */
+data class RouteInfo(val stops: List<MapStop>, val unplaced: List<String>)
+
 /**
- * Turns scan locations into map points. Trace gives locations as text, so the text
- * ("ROMULUS, MI, US") is geocoded on the phone and cached.
+ * Turns scan locations into map points. Trace gives locations as text ("ROMULUS, MI, US"),
+ * so the text is looked up with the phone's geocoder, falling back to OpenStreetMap's
+ * Nominatim when the phone can't find it. Hits are cached for good; misses only for a day,
+ * so a one-off failure doesn't hide a stop forever.
  */
 object Geo {
-    private const val PREFS = "geocache"
+    private const val PREFS = "geocache2"
+    private const val MISS_TTL_MS = 86_400_000L
+    private var lastNominatim = 0L
 
-    @Suppress("DEPRECATION") // the callback API is 33+, and this always runs off the main thread
     private fun lookup(ctx: Context, query: String): Pair<Double, Double>? {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.getString(query, null)?.let { cached ->
-            if (cached.isEmpty()) return null
-            val (a, b) = cached.split(",").map { it.toDouble() }
-            return a to b
+            if (cached.startsWith("miss:")) {
+                val at = cached.removePrefix("miss:").toLongOrNull() ?: 0L
+                if (System.currentTimeMillis() - at < MISS_TTL_MS) return null
+            } else {
+                val parts = cached.split(",").mapNotNull { it.toDoubleOrNull() }
+                if (parts.size == 2) return parts[0] to parts[1]
+            }
         }
-        if (!Geocoder.isPresent()) return null
-        val hit = runCatching { Geocoder(ctx, Locale.US).getFromLocationName(query, 1)?.firstOrNull() }
-            .getOrElse { return null } // network failure: don't cache, try again later
-        prefs.edit().putString(query, hit?.let { "${it.latitude},${it.longitude}" } ?: "").apply()
-        return hit?.let { it.latitude to it.longitude }
+        var networkTrouble = false
+        val hit = phoneGeocoder(ctx, query) { networkTrouble = true }
+            ?: nominatim(query) { networkTrouble = true }
+        when {
+            hit != null -> prefs.edit().putString(query, "${hit.first},${hit.second}").apply()
+            // Only remember a miss when the lookups actually answered "not found".
+            !networkTrouble -> prefs.edit().putString(query, "miss:${System.currentTimeMillis()}").apply()
+        }
+        return hit
     }
+
+    @Suppress("DEPRECATION") // the callback API is 33+, and this always runs off the main thread
+    private fun phoneGeocoder(ctx: Context, query: String, onError: () -> Unit): Pair<Double, Double>? {
+        if (!Geocoder.isPresent()) return null
+        return try {
+            Geocoder(ctx, Locale.US).getFromLocationName(query, 1)?.firstOrNull()?.let { it.latitude to it.longitude }
+        } catch (_: Exception) { onError(); null }
+    }
+
+    /** OpenStreetMap's free geocoder. Its usage policy asks for at most one request a second and a real User-Agent. */
+    private fun nominatim(query: String, onError: () -> Unit): Pair<Double, Double>? = synchronized(this) {
+        val wait = 1100 - (System.currentTimeMillis() - lastNominatim)
+        if (wait > 0) Thread.sleep(wait)
+        lastNominatim = System.currentTimeMillis()
+        return try {
+            val url = java.net.URL("https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
+                java.net.URLEncoder.encode(query, "UTF-8"))
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = 10_000; readTimeout = 15_000
+                setRequestProperty("User-Agent", "Shipments/1.0 (personal Android package tracker)")
+            }
+            try {
+                if (conn.responseCode != 200) { onError(); return null }
+                val arr = JSONArray(conn.inputStream.bufferedReader().use { it.readText() })
+                val o = arr.optJSONObject(0) ?: return null
+                val lat = o.optString("lat").toDoubleOrNull() ?: return null
+                val lon = o.optString("lon").toDoubleOrNull() ?: return null
+                lat to lon
+            } finally { conn.disconnect() }
+        } catch (_: Exception) { onError(); null }
+    }
+
+    private fun pointOf(ctx: Context, e: TrackEvent): Pair<Double, Double>? =
+        if (e.lat != null && e.lon != null && !(e.lat == 0.0 && e.lon == 0.0)) e.lat to e.lon
+        else e.location?.takeIf { it.isNotBlank() }?.let { lookup(ctx, it) }
 
     /** Where each package is now (its newest scan that has a findable location), for the overview map. */
     suspend fun pins(ctx: Context, parcels: List<Parcel>): List<MapPin> = withContext(Dispatchers.IO) {
         parcels.mapNotNull { p ->
-            val point = p.events.firstNotNullOfOrNull { e ->
-                if (e.lat != null && e.lon != null && !(e.lat == 0.0 && e.lon == 0.0)) e.lat to e.lon
-                else e.location?.takeIf { it.isNotBlank() }?.let { lookup(ctx, it) }
-            } ?: return@mapNotNull null
+            val point = p.events.firstNotNullOfOrNull { pointOf(ctx, it) } ?: return@mapNotNull null
             MapPin(p.id, point.first, point.second, p.status.color, p.title)
         }
     }
@@ -64,18 +110,23 @@ object Geo {
     suspend fun place(ctx: Context, query: String): Pair<Double, Double>? =
         withContext(Dispatchers.IO) { query.trim().takeIf { it.isNotEmpty() }?.let { lookup(ctx, it) } }
 
-    /** Oldest-first stops, merging consecutive scans at the same place. */
-    suspend fun stops(ctx: Context, events: List<TrackEvent>): List<MapStop> = withContext(Dispatchers.IO) {
+    /**
+     * Oldest-first stops. Back-to-back scans at the same spot (within about 2 km, so
+     * "SAINT PAUL, MN" and "Saint Paul, MN, US" count as one) become one stop.
+     */
+    suspend fun route(ctx: Context, events: List<TrackEvent>): RouteInfo = withContext(Dispatchers.IO) {
         val out = mutableListOf<MapStop>()
+        val unplaced = mutableListOf<String>()
         for (e in events.reversed()) {
-            val point = if (e.lat != null && e.lon != null && !(e.lat == 0.0 && e.lon == 0.0)) e.lat to e.lon
-            else e.location?.takeIf { it.isNotBlank() }?.let { lookup(ctx, it) } ?: continue
-            val label = e.location ?: ""
-            if (out.lastOrNull()?.label == label && label.isNotEmpty()) {
-                out[out.lastIndex] = out.last().copy(detail = e.description)
-            } else out += MapStop(point.first, point.second, label, e.description)
+            val loc = e.location?.takeIf { it.isNotBlank() }
+            val point = pointOf(ctx, e)
+            if (point == null) { if (loc != null && loc !in unplaced) unplaced += loc; continue }
+            val prev = out.lastOrNull()
+            if (prev != null && Math.abs(prev.lat - point.first) < 0.02 && Math.abs(prev.lon - point.second) < 0.02) {
+                out[out.lastIndex] = prev.copy(detail = e.description)
+            } else out += MapStop(point.first, point.second, loc ?: "", e.description)
         }
-        out
+        RouteInfo(out, unplaced)
     }
 }
 

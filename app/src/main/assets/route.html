@@ -83,17 +83,15 @@
     // Still to go: a dotted curve from where the package is now to the delivery address.
     map.addLayer({ id: 'ahead-line', type: 'line', source: 'ahead',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': T.accent, 'line-width': 3.5, 'line-opacity': 0.75, 'line-dasharray': [0.1, 2.2] } });
+      paint: { 'line-color': T.accent, 'line-width': 3.5, 'line-opacity': 0.45, 'line-dasharray': [0.1, 2.2] } });
     map.addLayer({ id: 'dest-ring', type: 'circle', source: 'dest',
       paint: { 'circle-radius': 7, 'circle-color': T.bg, 'circle-stroke-color': T.accent, 'circle-stroke-width': 3 } });
-    map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
-      layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': T.bg, 'line-width': 8 } });
+    // Where it's been: dotted curves joining each earlier stop, in the status color.
     map.addLayer({ id: 'route-line', type: 'line', source: 'route',
       layout: { 'line-cap': 'round', 'line-join': 'round' },
-      paint: { 'line-color': T.accent, 'line-width': 4, 'line-opacity': 0.9 } });
+      paint: { 'line-color': T.accent, 'line-width': 4.5, 'line-opacity': 0.95, 'line-dasharray': [0.1, 1.8] } });
     map.addLayer({ id: 'stop-past', type: 'circle', source: 'stops', filter: ['!=', ['get', 'latest'], true],
-      paint: { 'circle-radius': 5, 'circle-color': T.past, 'circle-stroke-color': T.bg, 'circle-stroke-width': 2 } });
+      paint: { 'circle-radius': 6, 'circle-color': T.past, 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
     map.addLayer({ id: 'stop-halo', type: 'circle', source: 'stops', filter: ['==', ['get', 'latest'], true],
       paint: { 'circle-radius': 18, 'circle-color': T.accent, 'circle-opacity': 0.22 } });
     map.addLayer({ id: 'stop-now', type: 'circle', source: 'stops', filter: ['==', ['get', 'latest'], true],

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -70,8 +71,9 @@ fun DetailScreen(
     var renaming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
     var pickingCarrier by remember { mutableStateOf(false) }
-    var stops by remember { mutableStateOf<List<MapStop>>(emptyList()) }
-    LaunchedEffect(p.events) { stops = Geo.stops(ctx.applicationContext, p.events) }
+    var route by remember { mutableStateOf(RouteInfo(emptyList(), emptyList())) }
+    LaunchedEffect(p.events) { route = Geo.route(ctx.applicationContext, p.events) }
+    val stops = route.stops
 
     Scaffold(
         topBar = {
@@ -124,7 +126,7 @@ fun DetailScreen(
                     }
                 }
             }
-            if (stops.isNotEmpty()) item {
+            if (stops.isNotEmpty()) item { Column {
                 Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).height(200.dp)
                     .then(if (LocalModern.current) Modifier.neuRaised(modernPalette, 20.dp) else Modifier)
                     .clip(RoundedCornerShape(if (LocalModern.current) 20.dp else 16.dp))) {
@@ -132,7 +134,8 @@ fun DetailScreen(
                         modifier = Modifier.fillMaxSize(), onTap = onMap)
                     MapAttribution(Modifier.align(Alignment.BottomEnd))
                 }
-            }
+                RouteNote(route, Modifier.padding(horizontal = 20.dp))
+            } }
             if (p.events.isEmpty()) item {
                 Text(
                     if (p.lastChecked != null) "No scans yet. Some carriers only report once the package is actually handed over, so this can take a day."
@@ -218,14 +221,18 @@ fun MapAttribution(modifier: Modifier = Modifier) {
 @Composable
 fun MapScreen(p: Parcel, onBack: () -> Unit) {
     val ctx = LocalContext.current
-    var stops by remember { mutableStateOf<List<MapStop>>(emptyList()) }
-    LaunchedEffect(p.events) { stops = Geo.stops(ctx.applicationContext, p.events) }
+    var route by remember { mutableStateOf(RouteInfo(emptyList(), emptyList())) }
+    LaunchedEffect(p.events) { route = Geo.route(ctx.applicationContext, p.events) }
     Box(Modifier.fillMaxSize()) {
-        RouteMap(stops, p.status.color, interactive = true, destination = destinationFor(ctx, p),
+        RouteMap(route.stops, p.status.color, interactive = true, destination = destinationFor(ctx, p),
             modifier = Modifier.fillMaxSize())
         FilledIconButton(onClick = onBack, modifier = Modifier.statusBarsPadding().padding(12.dp)) {
             Icon(Icons.Filled.ArrowBack, "Back")
         }
+        Surface(
+            Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(12.dp),
+            shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+        ) { RouteNote(route, Modifier.padding(horizontal = 12.dp, vertical = 8.dp), always = true) }
     }
 }
 
@@ -247,3 +254,25 @@ fun OverviewScreen(active: List<Parcel>, onBack: () -> Unit, onOpen: (String) ->
 /** Where the dotted line points: the delivery address, unless the package is already there or waiting at a pickup point. */
 private fun destinationFor(ctx: android.content.Context, p: Parcel): Pair<Double, Double>? =
     if (p.status == Status.DELIVERED || p.status == Status.AVAILABLE_FOR_PICKUP) null else Settings.home(ctx)
+
+/**
+ * Says plainly what the map can and can't show, so a single dot never looks like a bug:
+ * how many separate places the package has been scanned at, and any it couldn't place.
+ */
+@Composable
+private fun RouteNote(route: RouteInfo, modifier: Modifier = Modifier, always: Boolean = false) {
+    val n = route.stops.size
+    val lines = buildList {
+        if (n == 1 && (always || route.unplaced.isEmpty()))
+            add("Every scan so far is in ${route.stops[0].label.ifBlank { "one place" }}. Earlier stops will show up as it moves.")
+        else if (always && n > 1) add("$n places so far")
+        if (route.unplaced.isNotEmpty())
+            add("Couldn't find on the map: ${route.unplaced.joinToString("; ")}")
+    }
+    if (lines.isEmpty()) return
+    Column(modifier) {
+        lines.forEach {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
