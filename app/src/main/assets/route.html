@@ -171,11 +171,13 @@
     var toGo = d && last && (Math.abs(d[0] - last[0]) + Math.abs(d[1] - last[1]) > 0.01);
     map.getSource('ahead').setData(toGo ? line(arc(last, d, 0.18)) : empty());
     map.getSource('dest').setData(toGo ? { type: 'Feature', geometry: { type: 'Point', coordinates: d } } : empty());
-    if (toGo) coords = coords.concat([d]);
+    // Small preview on the package page: just the latest leg (previous stop to where it is now).
+    // Full-screen map: everywhere it has been, plus the delivery address.
+    var view = T.interactive ? (toGo ? coords.concat([d]) : coords) : coords.slice(-2);
     map.getSource('stops').setData({ type: 'FeatureCollection', features: coords.map(function (c, i) {
       return { type: 'Feature', properties: { latest: i === coords.length - 1 }, geometry: { type: 'Point', coordinates: c } };
     }) });
-    fit(coords, 10);
+    fit(view, 10);
   }
 </script>
 </body>
